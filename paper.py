@@ -155,14 +155,14 @@ class ArxivPaper:
             if match:
                 conclusion = match.group(0)
         llm = get_llm()
-        prompt = """Given the title, abstract, introduction and the conclusion (if any) of a paper in latex format, generate a one-sentence TLDR summary in __LANG__:
+        prompt = """给定一篇LaTeX格式的论文的标题、摘要、引言和结论（如果有），生成一句话的TLDR（太长不读）摘要。     :
         
         \\title{__TITLE__}
         \\begin{abstract}__ABSTRACT__\\end{abstract}
         __INTRODUCTION__
         __CONCLUSION__
         """
-        prompt = prompt.replace('__LANG__', llm.lang)
+        # prompt = prompt.replace('__LANG__', llm.lang)
         prompt = prompt.replace('__TITLE__', self.title)
         prompt = prompt.replace('__ABSTRACT__', self.summary)
         prompt = prompt.replace('__INTRODUCTION__', introduction)
@@ -178,7 +178,7 @@ class ArxivPaper:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an assistant who perfectly summarizes scientific paper, and gives the core idea of the paper to the user.",
+                    "content": "你是一个擅长于总结的论文阅读专家，请使用中文给出以下论文的核心观点",
                 },
                 {"role": "user", "content": prompt},
             ]
