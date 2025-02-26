@@ -155,12 +155,13 @@ class ArxivPaper:
             if match:
                 conclusion = match.group(0)
         llm = get_llm()
-        prompt = """给定一篇LaTeX格式的论文的标题、摘要、引言和结论（如果有），生成一句话的TLDR（太长不读）摘要。     :
+        prompt = """给定一篇LaTeX格式的论文的标题、摘要、引言和结论（如果有），生成一句话的中文的TLDR（太长不读）。     :
         
         \\title{__TITLE__}
         \\begin{abstract}__ABSTRACT__\\end{abstract}
         __INTRODUCTION__
         __CONCLUSION__
+        注意你需要使用中文回答问题!!!
         """
         # prompt = prompt.replace('__LANG__', llm.lang)
         prompt = prompt.replace('__TITLE__', self.title)
@@ -183,6 +184,7 @@ class ArxivPaper:
                 {"role": "user", "content": prompt},
             ]
         )
+        logger.info(f"Generated TLDR for {self.arxiv_id}: {tldr}")
         return tldr
 
     @cached_property
