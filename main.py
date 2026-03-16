@@ -172,12 +172,28 @@ if __name__ == '__main__':
             logger.info("No new papers found.")
             exit(0)
 
+        # Rerank using Zotero if credentials are available
+        if args.zotero_id and args.zotero_key:
+            logger.info("Retrieving Zotero corpus for reranking...")
+            corpus = get_zotero_corpus(args.zotero_id, args.zotero_key)
+            logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
+            if args.zotero_ignore:
+                corpus = filter_corpus(corpus, args.zotero_ignore)
+                logger.info(f"Remaining {len(corpus)} papers after filtering.")
+            if corpus:
+                papers = rerank_paper(papers, corpus)
+                logger.info("Papers reranked by Zotero similarity.")
+            else:
+                logger.warning("Zotero corpus is empty. Using default ordering.")
+                for i, p in enumerate(papers):
+                    p.score = max(10 - i * 0.3, 5)
+        else:
+            logger.warning("Zotero credentials not provided for --web_only mode. Papers will not be ranked by research interest.")
+            for i, p in enumerate(papers):
+                p.score = max(10 - i * 0.3, 5)
+
         if args.max_paper_num != -1:
             papers = papers[:args.max_paper_num]
-
-        # Assign dummy scores (no Zotero reranking)
-        for i, p in enumerate(papers):
-            p.score = max(10 - i * 0.3, 5)
 
         logger.info(f"Processing {len(papers)} papers for web...")
         html = render_email(papers)  # This triggers highlight/tldr/affiliations computation

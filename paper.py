@@ -11,6 +11,7 @@ from loguru import logger
 import tiktoken
 from contextlib import ExitStack
 import time
+from bs4 import BeautifulSoup
 
 class ArxivPaper:
     def __init__(self,paper:arxiv.Result):
@@ -380,4 +381,69 @@ class ArxivPaper:
                 return affiliations
         except Exception as e:
             logger.warning(f"Failed to get affiliations for {self.arxiv_id} due to API error: {e}")
+            return None
+
+    @cached_property
+    def full_text(self) -> Optional[str]:
+        """从arXiv HTML页面获取论文全文"""
+        if self._paper is None:
+            return self._data.get("full_text")
+
+        try:
+            # 尝试获取HTML版本
+            url = f"https://arxiv.org/html/{self.arxiv_id}"
+            s = requests.Session()
+            retries = Retry(total=3, backoff_factor=1)
+            s.mount('https://', HTTPAdapter(max_retries=retries))
+
+            resp = s.get(url, timeout=30)
+            if resp.status_code != 200:
+                logger.debug(f"HTML version not available for {self.arxiv_id}: HTTP {resp.status_code}")
+                return None
+
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # 找到主文档内容
+            article = soup.find('article', class_='ltx_document')
+            if not article:
+                logger.debug(f"Could not find article content for {self.arxiv_id}")
+                return None
+
+            # 提取章节内容（排除导航、脚注、参考文献等）
+            sections_text = []
+
+            # 提取摘要
+            abstract = article.find('div', class_='ltx_abstract')
+            if abstract:
+                abstract_text = abstract.get_text(separator=' ', strip=True)
+                sections_text.append(f"Abstract:\n{abstract_text}")
+
+            # 提取各章节
+            for section in article.find_all('section', class_='ltx_section'):
+                # 获取章节标题
+                title_elem = section.find(['h2', 'h3', 'h4'], class_=re.compile(r'ltx_title'))
+                section_title = title_elem.get_text(strip=True) if title_elem else ""
+
+                # 获取章节内容（段落）
+                paragraphs = []
+                for para in section.find_all('div', class_='ltx_para'):
+                    para_text = para.get_text(separator=' ', strip=True)
+                    if para_text:
+                        paragraphs.append(para_text)
+
+                if paragraphs:
+                    section_content = f"\n{section_title}\n" + "\n".join(paragraphs)
+                    sections_text.append(section_content)
+
+            full_text = "\n\n".join(sections_text)
+
+            # 清理多余空白
+            full_text = re.sub(r'\n{3,}', '\n\n', full_text)
+            full_text = re.sub(r' {2,}', ' ', full_text)
+
+            logger.info(f"Extracted full text for {self.arxiv_id} ({len(full_text)} chars)")
+            return full_text
+
+        except Exception as e:
+            logger.warning(f"Failed to get full text for {self.arxiv_id}: {e}")
             return None

@@ -28,6 +28,7 @@ from storage import (
 from llm import LLM, set_global_llm, get_llm
 from paper import ArxivPaper
 from construct_email import render_email, send_email
+from recommender import rerank_paper
 from loguru import logger
 
 # --- Config ---
@@ -56,6 +57,11 @@ SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
 ARXIV_QUERY = os.getenv("ARXIV_QUERY", "cat:cs.AI+cs.CV+cs.LG+cs.CL+cs.RO")
 MAX_PAPER_NUM = int(os.getenv("MAX_PAPER_NUM", "25"))
 
+# Zotero config from env
+ZOTERO_ID = os.getenv("ZOTERO_ID", "")
+ZOTERO_KEY = os.getenv("ZOTERO_KEY", "")
+ZOTERO_IGNORE = os.getenv("ZOTERO_IGNORE", "")
+
 # Mount static files
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -76,7 +82,7 @@ def get_email_receivers() -> list[str]:
 def run_daily_pipeline():
     """Fetch papers from arXiv, process with LLM, save JSON, and send email."""
     import feedparser
-    from main import get_arxiv_paper
+    from main import get_arxiv_paper, get_zotero_corpus, filter_corpus
 
     today = datetime.datetime.now().strftime('%Y-%m-%d')
     logger.info(f"Running daily pipeline for {today}...")
@@ -91,12 +97,33 @@ def run_daily_pipeline():
         logger.info("No new papers found today.")
         return
 
+    # Rerank papers using Zotero corpus if credentials are available
+    if ZOTERO_ID and ZOTERO_KEY:
+        try:
+            logger.info("Retrieving Zotero corpus for reranking...")
+            corpus = get_zotero_corpus(ZOTERO_ID, ZOTERO_KEY)
+            logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
+            if ZOTERO_IGNORE:
+                corpus = filter_corpus(corpus, ZOTERO_IGNORE)
+                logger.info(f"Remaining {len(corpus)} papers after filtering.")
+            if corpus:
+                papers = rerank_paper(papers, corpus)
+                logger.info("Papers reranked by Zotero similarity.")
+            else:
+                logger.warning("Zotero corpus is empty after filtering. Using default ordering.")
+                for i, p in enumerate(papers):
+                    p.score = max(10 - i * 0.3, 5)
+        except Exception as e:
+            logger.error(f"Zotero reranking failed: {e}. Using default ordering.")
+            for i, p in enumerate(papers):
+                p.score = max(10 - i * 0.3, 5)
+    else:
+        logger.warning("Zotero credentials not configured. Papers will not be ranked by research interest.")
+        for i, p in enumerate(papers):
+            p.score = max(10 - i * 0.3, 5)
+
     if MAX_PAPER_NUM != -1:
         papers = papers[:MAX_PAPER_NUM]
-
-    # Assign dummy scores (no Zotero reranking in server mode)
-    for i, p in enumerate(papers):
-        p.score = max(10 - i * 0.3, 5)
 
     logger.info(f"Processing {len(papers)} papers...")
     html = render_email(papers)  # Triggers highlight/tldr/affiliations
@@ -210,6 +237,65 @@ async def get_pdf(arxiv_id: str):
     if pdf_path is None:
         raise HTTPException(status_code=404, detail="PDF not found")
     return FileResponse(str(pdf_path), media_type="application/pdf")
+
+
+@app.get("/api/paper/{arxiv_id:path}/fulltext")
+async def get_fulltext(arxiv_id: str):
+    """获取论文全文（从arXiv HTML页面提取）"""
+    try:
+        # 创建临时Paper对象获取全文
+        client = arxiv.Client()
+        search = arxiv.Search(id_list=[arxiv_id])
+        results = list(client.results(search))
+        if not results:
+            raise HTTPException(status_code=404, detail="Paper not found on arXiv")
+
+        paper = ArxivPaper(results[0])
+        full_text = paper.full_text
+
+        if full_text is None:
+            raise HTTPException(status_code=404, detail="Full text not available for this paper")
+
+        return {"arxiv_id": arxiv_id, "full_text": full_text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get full text for {arxiv_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/paper/{arxiv_id:path}/content")
+async def get_paper_content(arxiv_id: str):
+    """获取论文内容（优先HTML全文，其次PDF的base64）"""
+    import base64
+
+    try:
+        # 先尝试获取HTML全文
+        client = arxiv.Client()
+        search = arxiv.Search(id_list=[arxiv_id])
+        results = list(client.results(search))
+        if not results:
+            raise HTTPException(status_code=404, detail="Paper not found on arXiv")
+
+        paper = ArxivPaper(results[0])
+        full_text = paper.full_text
+
+        if full_text:
+            return {"arxiv_id": arxiv_id, "type": "html", "content": full_text}
+
+        # 没有HTML，尝试获取PDF
+        pdf_path = get_or_download_pdf(arxiv_id)
+        if pdf_path and pdf_path.exists():
+            with open(pdf_path, "rb") as f:
+                pdf_base64 = base64.b64encode(f.read()).decode("utf-8")
+            return {"arxiv_id": arxiv_id, "type": "pdf", "content": pdf_base64}
+
+        raise HTTPException(status_code=404, detail="No content available for this paper")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get content for {arxiv_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class ChatRequest(BaseModel):
