@@ -218,7 +218,7 @@ framework = """
       color: #475569;
       line-height: 1.6;
     }
-    
+
     .paper-actions {
       margin-top: 16px;
       display: flex;

@@ -5,6 +5,7 @@
 // === State ===
 let currentAbortController = null;  // AbortController for cancelling in-flight chat streams
 let currentStreamPaperId = null;    // arxiv_id of the paper currently being streamed
+let userScrolledUp = false;         // true when user has scrolled away from bottom during streaming
 
 const state = {
   dates: [],
@@ -22,6 +23,7 @@ const state = {
     apiKey: '',
     apiBase: '',
     model: '',
+    theme: 'dark',
   },
   prompts: {
     systemPrompt: 'You are an expert AI research assistant. The user is reading an arXiv paper. Help them understand the paper and answer questions about it. Be concise and insightful. Use the paper info provided for context.\n\nPaper Title: {title}\nPaper Abstract: {summary}\nArXiv ID: {arxiv_id}',
@@ -52,6 +54,7 @@ const dom = {
   detailPlaceholder: $('#detailPlaceholder'),
   detailContent: $('#detailContent'),
   detailClose: $('#detailClose'),
+  chatHeaderTitle: $('#chatHeaderTitle'),
   detailTitle: $('#detailTitle'),
   detailAuthors: $('#detailAuthors'),
   detailAffiliations: $('#detailAffiliations'),
@@ -129,8 +132,9 @@ function updateServerHint() {
     hint.textContent = 'No server LLM configured. Use client mode.';
     hint.style.color = 'var(--error)';
   } else if (state.serverLlm.needsPassword) {
-    hint.textContent = 'Password required to use server LLM.';
-    hint.style.color = '';
+    const cached = state.settings.serverPassword ? ' (cached)' : '';
+    hint.textContent = cached ? 'Password loaded from cache.' : 'Password required to use server LLM.';
+    hint.style.color = cached ? 'var(--success)' : '';
   } else {
     hint.textContent = 'Server LLM available (no password needed).';
     hint.style.color = 'var(--success)';
@@ -172,11 +176,17 @@ function loadSettings() {
     const saved = localStorage.getItem('llmSettings');
     if (saved) Object.assign(state.settings, JSON.parse(saved));
   } catch {}
+  applyTheme(state.settings.theme || 'dark');
   applySettingsToForm();
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
 }
 
 function applySettingsToForm() {
   $$('input[name="llmMode"]').forEach(r => { r.checked = r.value === state.settings.mode; });
+  $$('input[name="themeMode"]').forEach(r => { r.checked = r.value === (state.settings.theme || 'dark'); });
   const el = (id) => document.getElementById(id);
   if (el('serverPassword')) el('serverPassword').value = state.settings.serverPassword || '';
   if (el('apiKey')) el('apiKey').value = state.settings.apiKey || '';
@@ -196,14 +206,17 @@ function toggleModeSettings() {
 
 function saveSettings() {
   const mode = $('input[name="llmMode"]:checked')?.value || 'server';
+  const theme = $('input[name="themeMode"]:checked')?.value || 'dark';
   state.settings = {
     mode,
     serverPassword: ($('#serverPassword')?.value || '').trim(),
     apiKey: ($('#apiKey')?.value || '').trim(),
     apiBase: ($('#apiBase')?.value || '').trim(),
     model: ($('#modelName')?.value || '').trim(),
+    theme,
   };
   localStorage.setItem('llmSettings', JSON.stringify(state.settings));
+  applyTheme(theme);
 
   // Save email config
   const emailReceivers = ($('#emailReceivers')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -259,12 +272,13 @@ function bindEvents() {
     applySettingsToForm();
     openModal(dom.settingsModal);
   });
-  dom.settingsClose.addEventListener('click', () => closeModal(dom.settingsModal));
+  dom.settingsClose.addEventListener('click', () => { saveSettings(); closeModal(dom.settingsModal); });
   dom.settingsModal.addEventListener('click', (e) => {
-    if (e.target === dom.settingsModal) closeModal(dom.settingsModal);
+    if (e.target === dom.settingsModal) { saveSettings(); closeModal(dom.settingsModal); }
   });
-  dom.settingsSave.addEventListener('click', saveSettings);
+  dom.settingsSave.addEventListener('click', () => { saveSettings(); closeModal(dom.settingsModal); showToast('Settings saved', 'success'); });
   $$('input[name="llmMode"]').forEach(r => r.addEventListener('change', toggleModeSettings));
+  $$('input[name="themeMode"]').forEach(r => r.addEventListener('change', (e) => applyTheme(e.target.value)));
 
   // Send now
   dom.sendNowBtn.addEventListener('click', async () => {
@@ -290,8 +304,16 @@ function bindEvents() {
     if (e.key === 'Enter') addNewPaper();
   });
 
-  // Reading progress
-  dom.detailUpper.addEventListener('scroll', updateReadingProgress);
+  // Track user scroll in chat messages
+  dom.chatMessages.addEventListener('scroll', () => {
+    if (state.streaming) {
+      userScrolledUp = !isNearBottom(dom.chatMessages);
+      updateScrollToBottomBtn();
+    }
+  });
+
+  // Reading progress (no-op if detailUpper is hidden)
+  if (dom.detailUpper) dom.detailUpper.addEventListener('scroll', updateReadingProgress);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeyboard);
@@ -339,6 +361,13 @@ function handleKeyboard(e) {
       document.activeElement.blur();
       return;
     }
+    // Collapse any expanded card
+    const expandedCard = dom.paperList.querySelector('.paper-card.expanded');
+    if (expandedCard) {
+      expandedCard.classList.remove('expanded');
+      state.selectedPaper = null;
+      return;
+    }
     if (state.selectedPaper) {
       closeDetail();
       return;
@@ -374,12 +403,14 @@ function handleKeyboard(e) {
     return;
   }
 
-  // Enter: Open focused paper
+  // Enter: Toggle expand focused paper card
   if (e.key === 'Enter' && state.focusedIndex >= 0) {
     e.preventDefault();
     const visiblePapers = getVisiblePapers();
-    if (visiblePapers[state.focusedIndex]) {
-      openDetail(visiblePapers[state.focusedIndex]);
+    const paper = visiblePapers[state.focusedIndex];
+    if (paper) {
+      const card = dom.paperList.querySelector(`[data-arxiv-id="${paper.arxiv_id}"]`);
+      if (card) toggleCardExpand(card, paper);
     }
     return;
   }
@@ -525,6 +556,14 @@ function createPaperCard(paper, idx) {
     : '';
 
   const scoreHtml = getScoreHtml(paper.score);
+  const tldrContent = paper.tldr || '';
+
+  // Build links HTML for the expanded section
+  let linksHtml = `<a class="detail-link" href="${escapeHtml(paper.pdf_url)}" target="_blank" onclick="event.stopPropagation()">PDF</a>`;
+  linksHtml += `<a class="detail-link" href="https://arxiv.org/abs/${escapeHtml(paper.arxiv_id)}" target="_blank" onclick="event.stopPropagation()">${escapeHtml(paper.arxiv_id)}</a>`;
+  if (paper.code_url) {
+    linksHtml += `<a class="detail-link" href="${escapeHtml(paper.code_url)}" target="_blank" onclick="event.stopPropagation()">Code</a>`;
+  }
 
   card.innerHTML = `
     <span class="card-rank">#${idx + 1}</span>
@@ -536,10 +575,50 @@ function createPaperCard(paper, idx) {
       <span class="card-stars">${scoreHtml}</span>
       <span class="card-id">${escapeHtml(paper.arxiv_id)}</span>
     </div>
+    <div class="card-expand">
+      <div class="card-expand-links">${linksHtml}</div>
+      <div class="card-expand-tldr">${tldrContent || '<p class="no-tldr">No analysis available</p>'}</div>
+      <button class="card-expand-chat-btn" data-arxiv-id="${escapeHtml(paper.arxiv_id)}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Chat about this paper
+      </button>
+    </div>
   `;
 
-  card.addEventListener('click', () => openDetail(paper));
+  card.addEventListener('click', (e) => {
+    // Don't toggle if clicking a link or button inside expanded area
+    if (e.target.closest('a') || e.target.closest('.card-expand-chat-btn')) return;
+    toggleCardExpand(card, paper);
+  });
+
+  // Chat button inside the expanded card
+  const chatBtn = card.querySelector('.card-expand-chat-btn');
+  chatBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openDetail(paper);
+  });
+
   return card;
+}
+
+// === Accordion: toggle card expand ===
+function toggleCardExpand(card, paper) {
+  const isExpanded = card.classList.contains('expanded');
+
+  // Collapse all other cards (accordion)
+  dom.paperList.querySelectorAll('.paper-card.expanded').forEach(c => {
+    c.classList.remove('expanded');
+  });
+
+  // Toggle this card
+  if (!isExpanded) {
+    card.classList.add('expanded');
+    state.selectedPaper = paper;
+    // Scroll expanded card into view
+    setTimeout(() => card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+  } else {
+    state.selectedPaper = null;
+  }
 }
 
 function getScoreHtml(score) {
@@ -595,46 +674,8 @@ function openDetail(paper) {
   const activeCard = dom.paperList.querySelector(`[data-arxiv-id="${paper.arxiv_id}"]`);
   if (activeCard) activeCard.classList.add('active');
 
-  // Fill detail
-  dom.detailTitle.textContent = paper.title;
-
-  const authors = Array.isArray(paper.authors) ? paper.authors : [];
-  let authorStr = authors.slice(0, 5).join(', ');
-  if (authors.length > 8) {
-    authorStr += ', ..., ' + authors.slice(-3).join(', ');
-  } else if (authors.length > 5) {
-    authorStr += ', ...';
-  }
-  dom.detailAuthors.textContent = authorStr;
-
-  const affiliations = paper.affiliations
-    ? (Array.isArray(paper.affiliations) ? paper.affiliations.join(' · ') : paper.affiliations)
-    : '';
-  dom.detailAffiliations.textContent = affiliations;
-
-  // Links
-  let linksHtml = `<a class="detail-link" href="${escapeHtml(paper.pdf_url)}" target="_blank">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-    PDF</a>`;
-  linksHtml += `<a class="detail-link" href="https://arxiv.org/abs/${escapeHtml(paper.arxiv_id)}" target="_blank">
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-    ${escapeHtml(paper.arxiv_id)}</a>`;
-  if (paper.code_url) {
-    linksHtml += `<a class="detail-link" href="${escapeHtml(paper.code_url)}" target="_blank">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      Code</a>`;
-  }
-  dom.detailLinks.innerHTML = linksHtml;
-
-  // Stars
-  dom.detailStars.innerHTML = getScoreHtml(paper.score);
-
-  // TLDR
-  dom.detailTldr.innerHTML = paper.tldr || '<p class="no-tldr">No analysis available</p>';
-
-  // Reset reading progress
-  dom.readingProgress.style.width = '0%';
-  dom.detailUpper.scrollTop = 0;
+  // Set compact chat header title
+  dom.chatHeaderTitle.textContent = paper.title;
 
   // Show detail
   dom.detailPlaceholder.classList.add('hidden');
@@ -712,18 +753,59 @@ async function saveChatHistory(arxivId) {
 }
 
 async function autoAnalyze(paper) {
-  const systemContent = normalizePrompt(state.prompts.systemPrompt)
+  const id = paper.arxiv_id;
+
+  // 尝试获取论文内容（优先HTML全文，其次PDF）
+  let paperContent = null;
+  try {
+    const resp = await fetch(`/api/paper/${encodeURIComponent(id)}/content`);
+    if (resp.ok) {
+      paperContent = await resp.json();
+      console.log(`Got paper content: type=${paperContent.type}, length=${paperContent.content?.length || 0}`);
+    }
+  } catch (e) {
+    console.log('Failed to fetch paper content:', e);
+  }
+
+  // 构建系统提示
+  let systemContent = normalizePrompt(state.prompts.systemPrompt)
     .replace('{title}', paper.title)
     .replace('{summary}', paper.summary || '')
     .replace('{arxiv_id}', paper.arxiv_id);
 
-  const systemMsg = { role: 'system', content: systemContent };
+  // 根据内容类型构建消息
+  let systemMsg;
+  if (paperContent?.type === 'pdf') {
+    // PDF作为文件传递给支持视觉的模型
+    systemMsg = {
+      role: 'system',
+      content: [
+        { type: 'text', text: systemContent },
+        {
+          type: 'file',
+          file: {
+            filename: `${id.replace('/', '_')}.pdf`,
+            file_data: `data:application/pdf;base64,${paperContent.content}`
+          }
+        }
+      ]
+    };
+  } else if (paperContent?.type === 'html') {
+    // HTML全文作为文本附加
+    systemMsg = {
+      role: 'system',
+      content: systemContent + '\n\n--- Paper Full Text ---\n' + paperContent.content
+    };
+  } else {
+    // 没有全文，只用摘要
+    systemMsg = { role: 'system', content: systemContent };
+  }
+
   const userMsg = { role: 'user', content: normalizePrompt(state.prompts.autoAnalyzePrompt) };
 
-  const id = paper.arxiv_id;
   state.chatHistories[id] = [systemMsg, userMsg];
 
-  appendChatBubble('user', 'Analyze this paper');
+  appendChatBubble('user', normalizePrompt(state.prompts.autoAnalyzePrompt));
   await streamChat(id);
 }
 
@@ -762,6 +844,7 @@ async function streamChat(arxivId) {
   currentStreamPaperId = arxivId;
 
   state.streaming = true;
+  userScrolledUp = false;
   dom.chatSend.disabled = true;
 
   // Create assistant bubble with typing indicator
@@ -861,7 +944,9 @@ async function streamChat(arxivId) {
     currentStreamPaperId = null;
   }
   state.streaming = false;
+  userScrolledUp = false;
   dom.chatSend.disabled = false;
+  updateScrollToBottomBtn();
 
   if (fullText) {
     state.chatHistories[arxivId].push({ role: 'assistant', content: fullText });
@@ -873,14 +958,31 @@ function appendChatBubble(role, content) {
   const div = document.createElement('div');
   div.className = `chat-msg ${role}`;
   if (role === 'system') return div; // don't display
-  div.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content);
+  div.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content).replace(/\n/g, '<br>');
   dom.chatMessages.appendChild(div);
   scrollChatToBottom();
   return div;
 }
 
-function scrollChatToBottom() {
-  dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+function isNearBottom(el, threshold = 60) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+function scrollChatToBottom(force = false) {
+  if (force || !userScrolledUp) {
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+  }
+  updateScrollToBottomBtn();
+}
+
+function updateScrollToBottomBtn() {
+  const btn = document.getElementById('scrollToBottomBtn');
+  if (!btn) return;
+  if (userScrolledUp && state.streaming) {
+    btn.classList.add('visible');
+  } else {
+    btn.classList.remove('visible');
+  }
 }
 
 // === Add New Paper ===
@@ -917,8 +1019,9 @@ async function addNewPaper() {
     closeModal(dom.addPaperModal);
     showToast('Paper added successfully', 'success');
 
-    // Auto-open
-    openDetail(paper);
+    // Auto-expand the new card
+    const newCard = dom.paperList.querySelector(`[data-arxiv-id="${paper.arxiv_id}"]`);
+    if (newCard) toggleCardExpand(newCard, paper);
   } catch (e) {
     showToast(`Failed: ${e.message}`, 'error');
   } finally {
@@ -944,7 +1047,8 @@ function renderMarkdown(text) {
   let cleaned = text.replace(/<think>([\s\S]*?)<\/think>/gi, (_, content) => {
     const idx = thinkBlocks.length;
     thinkBlocks.push(content.trim());
-    return `__THINK_BLOCK_${idx}__`;
+    // Use HTML comment as placeholder (won't be parsed by markdown)
+    return `\n\n<!--THINK_BLOCK_${idx}-->\n\n`;
   });
 
   // Handle unclosed <think> (streaming)
@@ -966,10 +1070,11 @@ function renderMarkdown(text) {
     html = '<p>' + html + '</p>';
   }
 
-  // Replace think placeholders
-  thinkBlocks.forEach((content, idx) => {
-    const thinkHtml = `<details class="thinking-block"><summary>Thinking</summary><div class="thinking-content">${escapeHtml(content)}</div></details>`;
-    html = html.replace(`__THINK_BLOCK_${idx}__`, thinkHtml);
+  // Replace think placeholders (HTML comments are preserved by marked)
+  html = html.replace(/<!--THINK_BLOCK_(\d+)-->/g, (match, idx) => {
+    const content = thinkBlocks[parseInt(idx)];
+    if (content === undefined) return match;
+    return `<details class="thinking-block"><summary>Thinking</summary><div class="thinking-content">${escapeHtml(content)}</div></details>`;
   });
 
   // Pending thinking block
