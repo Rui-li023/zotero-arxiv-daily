@@ -3,6 +3,9 @@
 // ============================================================
 
 // === State ===
+let currentAbortController = null;  // AbortController for cancelling in-flight chat streams
+let currentStreamPaperId = null;    // arxiv_id of the paper currently being streamed
+
 const state = {
   dates: [],
   currentDate: null,
@@ -664,8 +667,13 @@ function updateReadingProgress() {
 async function loadChatForPaper(paper) {
   const id = paper.arxiv_id;
 
-  // If we already have it in memory, just render
-  if (state.chatHistories[id]) {
+  // If currently streaming for this same paper, don't reset
+  if (currentStreamPaperId === id && state.streaming) {
+    return;
+  }
+
+  // If we already have it in memory (with assistant response), just render
+  if (state.chatHistories[id] && state.chatHistories[id].some(m => m.role === 'assistant')) {
     dom.chatMessages.innerHTML = '';
     state.chatHistories[id].forEach(msg => appendChatBubble(msg.role, msg.content));
     return;
@@ -704,19 +712,27 @@ async function saveChatHistory(arxivId) {
 }
 
 async function autoAnalyze(paper) {
-  const systemContent = state.prompts.systemPrompt
+  const systemContent = normalizePrompt(state.prompts.systemPrompt)
     .replace('{title}', paper.title)
     .replace('{summary}', paper.summary || '')
     .replace('{arxiv_id}', paper.arxiv_id);
 
   const systemMsg = { role: 'system', content: systemContent };
-  const userMsg = { role: 'user', content: state.prompts.autoAnalyzePrompt };
+  const userMsg = { role: 'user', content: normalizePrompt(state.prompts.autoAnalyzePrompt) };
 
   const id = paper.arxiv_id;
   state.chatHistories[id] = [systemMsg, userMsg];
 
   appendChatBubble('user', 'Analyze this paper');
   await streamChat(id);
+}
+
+/** Replace literal backslash-n sequences with real newlines.
+ *  JSON already decodes \n, but if the user edited config with \\n
+ *  or pasted from a non-JSON source, we handle it here. */
+function normalizePrompt(text) {
+  if (!text) return '';
+  return text.replace(/\\n/g, '\n');
 }
 
 async function sendChat() {
@@ -735,11 +751,22 @@ async function sendChat() {
 }
 
 async function streamChat(arxivId) {
+  // Abort any in-flight stream for a different paper
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+
+  const abortController = new AbortController();
+  currentAbortController = abortController;
+  currentStreamPaperId = arxivId;
+
   state.streaming = true;
   dom.chatSend.disabled = true;
 
+  // Create assistant bubble with typing indicator
   const bubble = appendChatBubble('assistant', '');
-  bubble.classList.add('streaming-cursor');
+  bubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
 
   const messages = state.chatHistories[arxivId];
   const body = { messages };
@@ -759,6 +786,7 @@ async function streamChat(arxivId) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: abortController.signal,
     });
 
     if (!resp.ok) {
@@ -788,8 +816,12 @@ async function streamChat(arxivId) {
           if (data.error) throw new Error(data.error);
           if (data.token) {
             fullText += data.token;
-            bubble.innerHTML = renderMarkdown(fullText);
-            scrollChatToBottom();
+            // Only update DOM if this stream is still for the active paper
+            if (currentStreamPaperId === arxivId && bubble.isConnected) {
+              bubble.classList.add('streaming-cursor');
+              bubble.innerHTML = renderMarkdown(fullText);
+              scrollChatToBottom();
+            }
           }
         } catch (parseErr) {
           if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
@@ -797,17 +829,37 @@ async function streamChat(arxivId) {
       }
     }
   } catch (e) {
-    if (!fullText) {
-      bubble.classList.add('error');
-      bubble.textContent = `Error: ${e.message}`;
-    } else {
-      const errBubble = appendChatBubble('assistant', '');
-      errBubble.classList.add('error');
-      errBubble.textContent = `Stream interrupted: ${e.message}`;
+    // Silently ignore aborted requests (user switched papers)
+    if (e.name === 'AbortError') {
+      // Still save partial text if we have any
+      if (fullText) {
+        state.chatHistories[arxivId].push({ role: 'assistant', content: fullText });
+        saveChatHistory(arxivId);
+      }
+      return;
+    }
+    if (bubble.isConnected) {
+      if (!fullText) {
+        bubble.classList.remove('streaming-cursor');
+        bubble.classList.add('error');
+        bubble.textContent = `Error: ${e.message}`;
+      } else {
+        const errBubble = appendChatBubble('assistant', '');
+        errBubble.classList.add('error');
+        errBubble.textContent = `Stream interrupted: ${e.message}`;
+      }
     }
   }
 
-  bubble.classList.remove('streaming-cursor');
+  if (bubble.isConnected) {
+    bubble.classList.remove('streaming-cursor');
+  }
+
+  // Clean up
+  if (currentAbortController === abortController) {
+    currentAbortController = null;
+    currentStreamPaperId = null;
+  }
   state.streaming = false;
   dom.chatSend.disabled = false;
 

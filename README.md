@@ -106,6 +106,66 @@ uv run main.py
 > [!WARNING]
 > Other package managers like pip or conda are not tested. You can still use them to install this workflow because there is a `pyproject.toml`, while potential problems exist.
 
+### Web Server Mode
+
+Besides the email pipeline, you can run a **web server** with a paper viewer, LLM-powered chat, and daily scheduled email delivery.
+
+#### 1. Configure environment variables
+
+Copy the example file and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Key variables in `.env`:
+
+| Variable | Required | Description |
+| :--- | :---: | :--- |
+| `OPENAI_API_KEY` | ✅ | API key for LLM (OpenAI, SiliconFlow, etc.) |
+| `OPENAI_API_BASE` | | API base URL (default: `https://api.openai.com/v1`) |
+| `MODEL_NAME` | | Model name (default: `gpt-4o`) |
+| `LANGUAGE` | | Language for paper analysis (default: `English`) |
+| `ARXIV_QUERY` | ✅ | arXiv categories, e.g. `cat:cs.AI+cat:cs.CV+cat:cs.LG` |
+| `MAX_PAPER_NUM` | | Max papers per day (default: `25`) |
+| `SMTP_SERVER` | | SMTP server for email delivery |
+| `SMTP_PORT` | | SMTP port (default: `465`) |
+| `SENDER` | | Sender email address |
+| `SENDER_PASSWORD` | | SMTP auth code |
+| `RECEIVER` | | Fallback receiver email |
+| `SERVER_LLM_PASSWORD` | | Password to protect server-side LLM access |
+
+#### 2. Configure runtime settings (optional)
+
+Copy the example config for email schedule and chat prompts:
+
+```bash
+cp config.example.json config.json
+```
+
+`config.json` fields:
+
+| Field | Description |
+| :--- | :--- |
+| `email_receivers` | List of email addresses to receive daily papers |
+| `email_schedule_hour` | Hour (0-23) to send daily email (default: `9`) |
+| `email_schedule_minute` | Minute (0-59) to send daily email (default: `0`) |
+| `chat_system_prompt` | System prompt for LLM chat (supports `{title}`, `{summary}`, `{arxiv_id}` placeholders) |
+| `chat_auto_analyze_prompt` | Prompt for auto-analyzing a paper when first opened |
+
+> [!TIP]
+> `config.json` can also be edited from the web UI Settings panel. Both `.env` and `config.json` are in `.gitignore`.
+
+#### 3. Start the server
+
+```bash
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+Then open `http://localhost:8000` in your browser.
+
+On first startup, the server will automatically fetch today's papers if no data exists yet. It also runs a daily scheduler at the configured time to fetch new papers and send emails.
+
 ## 🚀 Sync with the latest version
 This project is in active development. You can subscribe this repo via `Watch` so that you can be notified once we publish new release.
 

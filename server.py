@@ -243,7 +243,10 @@ async def chat(req: ChatRequest):
         except Exception:
             raise HTTPException(status_code=400, detail="No LLM configured. Provide an API key or set server environment variables.")
 
-    async def event_stream():
+    def event_stream():
+        """Sync generator — Starlette runs it in a threadpool so the
+        blocking LLM calls don't stall the event-loop, and each yield
+        is flushed to the client immediately."""
         try:
             for token in llm.generate_stream(req.messages):
                 data = json.dumps({"token": token}, ensure_ascii=False)
