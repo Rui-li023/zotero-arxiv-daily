@@ -74,9 +74,27 @@ class LLM:
                     model=self.model,
                     stream=True,
                 )
+                in_thinking = False
                 for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    # Handle reasoning_content (DeepSeek-R1 and similar models)
+                    reasoning = getattr(delta, 'reasoning_content', None)
+                    if reasoning:
+                        if not in_thinking:
+                            yield "<think>"
+                            in_thinking = True
+                        yield reasoning
+                    # Handle regular content
+                    if delta.content:
+                        if in_thinking:
+                            yield "</think>"
+                            in_thinking = False
+                        yield delta.content
+                # Close thinking tag if stream ends while still in thinking
+                if in_thinking:
+                    yield "</think>"
                 return
             except (OpenAIError, Exception) as e:
                 if attempt == max_retries - 1:
