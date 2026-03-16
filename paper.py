@@ -150,6 +150,43 @@ class ArxivPaper:
         return file_contents
     
     @cached_property
+    def highlight(self) -> str:
+        """生成一句话论文亮点"""
+        try:
+            llm = get_llm()
+            prompt = f"""
+标题: {self.title}
+摘要: {self.summary}
+
+请用一句话（严格限制在50字以内）概括这篇论文的核心创新点。要求：
+1. 突出最关键的技术创新
+2. 极度简洁，直击要点
+3. 只返回一句话，不要引号、不要任何其他内容
+"""
+            highlight = llm.generate(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一位资深的AI研究员，擅长用一句话抓住论文核心。你的回答必须简洁，不超过50字。",
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+            )
+            logger.info(f"Generated highlight for {self.arxiv_id}")
+            
+            # 过滤思考标签
+            result = re.sub(r'<think>.*?</think>', '', highlight, flags=re.DOTALL | re.IGNORECASE)
+            result = result.strip().strip('"').strip('"').strip('"')
+            
+            # 强制截断，确保不超过80字符
+            if len(result) > 80:
+                result = result[:77] + "..."
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to generate highlight for {self.arxiv_id}: {e}")
+            return "论文简介暂时无法生成"
+
+    @cached_property
     def tldr(self) -> str:
         try:
             introduction = ""
@@ -173,51 +210,85 @@ class ArxivPaper:
                     conclusion = match.group(0)
             llm = get_llm()
             prompt = f"""
-# 任务指令
-1. **深度思考 (Think)**：不要只是复述摘要。请分析作者为什么选择这个方法？其核心假设是否存在漏洞？
-2. **行业定位 (Context)**：基于你的知识库，指出这篇论文在相关领域（如 NLP, CV, 强化学习等）所处的位置。
-3. **结构化输出**：使用 HTML 格式输出，确保在网页上具有极佳的可读性。
-
-# 待处理数据
+# 待分析论文
 标题: {self.title}
 摘要: {self.summary}
 引言: {introduction}
 结论: {conclusion}
 
-# 输出要求（HTML 格式）
-请包含以下模块：
-1. **一、 五秒钟定性 (The 5 Cs)**
-   - Category (类别)、Context (背景)、Correctness (正确性/假设)、Contributions (贡献)、Clarity (清晰度)。
-2. **二、 核心技术解构**
-   - 针对的主要痛点是什么？
-   - 提出的创新算法/架构是什么？（请用简洁的逻辑链描述）
-   - 所做实验的设置和结果是什么？
-3. **三、 批判性思考与搜索建议**
-   - **局限性**：作者可能隐藏了哪些限制？
-   - **搜索关键词**：如果我想深入研究这个方向，我应该搜索哪些关键词?
-   - **同类对比**：这篇论文与该领域目前的最优（SOTA）方法相比，优劣在哪里？
+# 输出要求
+请严格按照以下HTML模板输出论文分析，不要修改HTML结构和class名称：
 
-# 注意
-请使用专业、干练的中文学术口吻。"""
+<div class="paper-analysis">
+  <div class="section">
+    <h3>核心创新</h3>
+    <p>[用2-3句话说明论文的核心创新点和技术贡献]</p>
+  </div>
+  
+  <div class="section">
+    <h3>技术细节</h3>
+    <ul>
+      <li><strong>问题定义：</strong>[论文要解决的核心问题]</li>
+      <li><strong>方法概述：</strong>[提出的方法或架构的简要描述]</li>
+      <li><strong>关键技术：</strong>[使用的关键技术或算法]</li>
+    </ul>
+  </div>
+  
+  <div class="section">
+    <h3>实验与结果</h3>
+    <p>[实验设置和主要结果，包括与baseline的对比]</p>
+  </div>
+  
+  <div class="section">
+    <h3>优势与局限</h3>
+    <ul>
+      <li><strong>优势：</strong>[论文的主要优势]</li>
+      <li><strong>局限：</strong>[可能存在的问题或局限性]</li>
+    </ul>
+  </div>
+  
+  <div class="section">
+    <h3>相关方向</h3>
+    <p><strong>关键词：</strong>[5-8个相关研究关键词，用逗号分隔]</p>
+  </div>
+</div>
+
+# 注意事项
+1. 严格遵循上述HTML结构，不要添加或删除section
+2. 使用专业、简洁的中文学术语言
+3. 每个部分内容要具体、有信息量
+4. 不要使用代码块包裹，直接输出HTML
+"""
             
             tldr = llm.generate(
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一位资深的人工智能首席科学家，拥有极强的文献综述与批判性思维能力。你的任务是运用 S. Keshav 的“三段式阅读法”逻辑，对以下 LaTeX 格式的论文进行深度解构。",
+                        "content": "你是一位资深的人工智能研究员，擅长深度分析论文并提炼关键信息。你必须严格按照用户提供的HTML模板输出结果。",
                     },
                     {"role": "user", "content": prompt},
                 ]
             )
-            logger.info(f"Generated TLDR for {self.arxiv_id}: {tldr}")
+            logger.info(f"Generated TLDR for {self.arxiv_id}")
+            
+            # 过滤思考标签
+            tldr = re.sub(r'<think>.*?</think>', '', tldr, flags=re.DOTALL | re.IGNORECASE)
+            
+            # 提取HTML内容
             fenced_contents = re.findall(r"```html\s*(.*?)```", tldr, flags=re.DOTALL | re.IGNORECASE)
             if fenced_contents:
                 tldr = fenced_contents[0]
+            
+            # 确保包含必要的div结构
+            if '<div class="paper-analysis">' not in tldr:
+                # 如果LLM没有按模板输出，尝试包装它
+                tldr = f'<div class="paper-analysis">{tldr}</div>'
+            
             return tldr
         except Exception as e:
             logger.warning(f"Failed to generate TLDR for {self.arxiv_id} due to API error: {e}")
             # 返回摘要作为后备
-            return f"<p>{self.summary}</p>"
+            return f'<div class="paper-analysis"><div class="section"><p>{self.summary}</p></div></div>'
 
     @cached_property
     def affiliations(self) -> Optional[list[str]]:
