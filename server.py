@@ -2,7 +2,10 @@ import os
 import json
 import asyncio
 import re
+import datetime
+import threading
 from pathlib import Path
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -18,25 +21,148 @@ from storage import (
     load_daily_papers_raw,
     get_or_download_pdf,
     save_daily_papers,
+    save_chat_history,
+    load_chat_history,
     DATA_DIR,
 )
 from llm import LLM, set_global_llm, get_llm
 from paper import ArxivPaper
+from construct_email import render_email, send_email
 from loguru import logger
 
-app = FastAPI(title="arXiv Daily Papers")
+# --- Config ---
+
+CONFIG_PATH = Path(__file__).parent / "config.json"
+
+def load_config() -> dict:
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_config(cfg: dict):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
 
 # Server LLM password (required to use server-side API key)
 SERVER_LLM_PASSWORD = os.getenv("SERVER_LLM_PASSWORD", "")
 
+# Email config from env
+SMTP_SERVER = os.getenv("SMTP_SERVER", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SENDER = os.getenv("SENDER", "")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
+ARXIV_QUERY = os.getenv("ARXIV_QUERY", "cat:cs.AI+cs.CV+cs.LG+cs.CL+cs.RO")
+MAX_PAPER_NUM = int(os.getenv("MAX_PAPER_NUM", "25"))
+
 # Mount static files
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# --- Email Pipeline ---
+
+def get_email_receivers() -> list[str]:
+    """Get receivers from config.json, fall back to env RECEIVER."""
+    cfg = load_config()
+    receivers = cfg.get("email_receivers", [])
+    if not receivers:
+        env_receiver = os.getenv("RECEIVER", "")
+        if env_receiver:
+            receivers = [r.strip() for r in env_receiver.split(",") if r.strip()]
+    return receivers
 
 
-@app.on_event("startup")
-async def startup():
+def run_daily_pipeline():
+    """Fetch papers from arXiv, process with LLM, save JSON, and send email."""
+    import feedparser
+    from main import get_arxiv_paper
+
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
+    logger.info(f"Running daily pipeline for {today}...")
+
+    try:
+        papers = get_arxiv_paper(ARXIV_QUERY, debug=False)
+    except Exception as e:
+        logger.error(f"Failed to fetch arXiv papers: {e}")
+        return
+
+    if not papers:
+        logger.info("No new papers found today.")
+        return
+
+    if MAX_PAPER_NUM != -1:
+        papers = papers[:MAX_PAPER_NUM]
+
+    # Assign dummy scores (no Zotero reranking in server mode)
+    for i, p in enumerate(papers):
+        p.score = max(10 - i * 0.3, 5)
+
+    logger.info(f"Processing {len(papers)} papers...")
+    html = render_email(papers)  # Triggers highlight/tldr/affiliations
+
+    save_daily_papers(papers, today)
+    logger.success(f"Saved {len(papers)} papers to data/{today}.json")
+
+    # Send email to all configured receivers
+    receivers = get_email_receivers()
+    if receivers and SMTP_SERVER and SENDER and SENDER_PASSWORD:
+        for receiver in receivers:
+            try:
+                send_email(SENDER, receiver, SENDER_PASSWORD, SMTP_SERVER, SMTP_PORT, html)
+                logger.success(f"Email sent to {receiver}")
+            except Exception as e:
+                logger.error(f"Failed to send email to {receiver}: {e}")
+    else:
+        logger.info("Email sending skipped: missing SMTP config or no receivers configured.")
+
+
+def check_and_run_pipeline():
+    """Check if today's data exists; if not, run the pipeline in a background thread."""
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
+    data = load_daily_papers_raw(today)
+    if data is not None:
+        logger.info(f"Data for {today} already exists ({len(data)} papers). Skipping pipeline.")
+        return
+
+    logger.info(f"No data for {today}. Starting pipeline in background...")
+    thread = threading.Thread(target=run_daily_pipeline, daemon=True)
+    thread.start()
+
+
+# --- Scheduled daily email ---
+
+_scheduler_task = None
+
+async def daily_scheduler():
+    """Run pipeline daily at configured time."""
+    while True:
+        cfg = load_config()
+        target_hour = cfg.get("email_schedule_hour", 9)
+        target_minute = cfg.get("email_schedule_minute", 0)
+
+        now = datetime.datetime.now()
+        target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        if target <= now:
+            target += datetime.timedelta(days=1)
+
+        wait_seconds = (target - now).total_seconds()
+        logger.info(f"Next scheduled pipeline at {target.strftime('%Y-%m-%d %H:%M')} (in {wait_seconds/3600:.1f}h)")
+
+        await asyncio.sleep(wait_seconds)
+
+        # Run pipeline in thread to not block event loop
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, run_daily_pipeline)
+
+
+# --- App Lifecycle ---
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _scheduler_task
+
+    # Init LLM
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
     model = os.getenv("MODEL_NAME", "gpt-4o")
@@ -44,6 +170,22 @@ async def startup():
     if api_key:
         set_global_llm(api_key=api_key, base_url=base_url, model=model, lang=lang)
         logger.info("LLM initialized from environment")
+
+    # Check if today's data exists; if not, run pipeline
+    check_and_run_pipeline()
+
+    # Start daily scheduler
+    _scheduler_task = asyncio.create_task(daily_scheduler())
+
+    yield
+
+    # Cleanup
+    if _scheduler_task:
+        _scheduler_task.cancel()
+
+
+app = FastAPI(title="arXiv Daily Papers", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # --- API endpoints ---
@@ -150,6 +292,80 @@ async def add_new_paper(req: NewPaperRequest):
     except Exception as e:
         logger.error(f"Failed to fetch paper {arxiv_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Chat History API ---
+
+@app.get("/api/chat/history/{arxiv_id:path}")
+async def get_chat_history(arxiv_id: str):
+    """Load saved chat history for a paper."""
+    messages = load_chat_history(arxiv_id)
+    if messages is None:
+        return {"messages": []}
+    return {"messages": messages}
+
+
+class SaveChatRequest(BaseModel):
+    messages: list[dict]
+
+
+@app.post("/api/chat/history/{arxiv_id:path}")
+async def save_chat(arxiv_id: str, req: SaveChatRequest):
+    """Save chat history for a paper."""
+    save_chat_history(arxiv_id, req.messages)
+    return {"status": "ok"}
+
+
+# --- Config API ---
+
+@app.get("/api/config/prompts")
+async def get_prompts():
+    """Return chat prompts from config.json."""
+    cfg = load_config()
+    return {
+        "chat_system_prompt": cfg.get("chat_system_prompt", ""),
+        "chat_auto_analyze_prompt": cfg.get("chat_auto_analyze_prompt", ""),
+    }
+
+
+@app.get("/api/config/email")
+async def get_email_config():
+    """Return email configuration."""
+    cfg = load_config()
+    return {
+        "email_receivers": cfg.get("email_receivers", []),
+        "email_schedule_hour": cfg.get("email_schedule_hour", 9),
+        "email_schedule_minute": cfg.get("email_schedule_minute", 0),
+        "smtp_configured": bool(SMTP_SERVER and SENDER),
+    }
+
+
+class EmailConfigRequest(BaseModel):
+    email_receivers: list[str] | None = None
+    email_schedule_hour: int | None = None
+    email_schedule_minute: int | None = None
+
+
+@app.post("/api/config/email")
+async def update_email_config(req: EmailConfigRequest):
+    """Update email configuration in config.json."""
+    cfg = load_config()
+    if req.email_receivers is not None:
+        cfg["email_receivers"] = req.email_receivers
+    if req.email_schedule_hour is not None:
+        cfg["email_schedule_hour"] = req.email_schedule_hour
+    if req.email_schedule_minute is not None:
+        cfg["email_schedule_minute"] = req.email_schedule_minute
+    save_config(cfg)
+    return {"status": "ok"}
+
+
+@app.post("/api/email/send-now")
+async def send_email_now():
+    """Manually trigger pipeline and email sending."""
+    thread = threading.Thread(target=run_daily_pipeline, daemon=True)
+    thread.start()
+    return {"status": "pipeline started"}
 
 
 @app.get("/")

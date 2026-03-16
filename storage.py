@@ -7,11 +7,13 @@ from requests.adapters import HTTPAdapter, Retry
 
 DATA_DIR = Path(__file__).parent / "data"
 PDF_DIR = DATA_DIR / "pdfs"
+CHAT_DIR = DATA_DIR / "chats"
 
 
 def _ensure_dirs():
     DATA_DIR.mkdir(exist_ok=True)
     PDF_DIR.mkdir(exist_ok=True)
+    CHAT_DIR.mkdir(exist_ok=True)
 
 
 def save_daily_papers(papers, date: str):
@@ -52,6 +54,25 @@ def list_available_dates() -> list[str]:
         dates.append(f.stem)
     dates.sort(reverse=True)
     return dates
+
+
+def save_chat_history(arxiv_id: str, messages: list[dict]):
+    """Save chat history for a paper."""
+    _ensure_dirs()
+    safe_id = arxiv_id.replace("/", "_")
+    path = CHAT_DIR / f"{safe_id}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(messages, f, ensure_ascii=False, indent=2)
+
+
+def load_chat_history(arxiv_id: str) -> list[dict] | None:
+    """Load chat history for a paper. Returns None if not found."""
+    safe_id = arxiv_id.replace("/", "_")
+    path = CHAT_DIR / f"{safe_id}.json"
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def get_or_download_pdf(arxiv_id: str) -> Path | None:

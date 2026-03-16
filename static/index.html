@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>arXiv Daily Papers</title>
+  <title>arXiv Daily</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <div class="app">
+
     <!-- Header -->
     <header class="header">
       <div class="header-left">
@@ -18,75 +20,36 @@
       </div>
       <div class="header-center">
         <div class="date-nav">
-          <button class="date-btn date-prev" id="prevDate" title="Previous day">&larr;</button>
+          <button class="date-btn" id="prevDate" title="Previous day (←)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
           <select class="date-select" id="dateSelect"></select>
-          <button class="date-btn date-next" id="nextDate" title="Next day">&rarr;</button>
+          <button class="date-btn" id="nextDate" title="Next day (→)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
         </div>
       </div>
       <div class="header-right">
-        <button class="settings-btn" id="settingsBtn" title="Settings">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <button class="header-action-btn" id="addPaperBtn" title="Add paper by arXiv ID">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="header-action-btn" id="settingsBtn" title="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
       </div>
     </header>
 
-    <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal">
-      <div class="modal">
-        <div class="modal-header">
-          <h2>LLM Settings</h2>
-          <button class="modal-close" id="settingsClose">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label>Mode</label>
-            <div class="radio-group">
-              <label class="radio-label">
-                <input type="radio" name="llmMode" value="server" checked> Server (use server API key)
-              </label>
-              <label class="radio-label">
-                <input type="radio" name="llmMode" value="client"> Client (use your own key)
-              </label>
-            </div>
-          </div>
-          <div id="serverSettings" class="server-settings">
-            <div class="form-group">
-              <label for="serverPassword">Server Password</label>
-              <input type="password" id="serverPassword" placeholder="Enter server password">
-              <div class="form-hint" id="serverHint"></div>
-            </div>
-          </div>
-          <div id="clientSettings" class="client-settings hidden">
-            <div class="form-group">
-              <label for="apiKey">API Key</label>
-              <input type="password" id="apiKey" placeholder="sk-...">
-            </div>
-            <div class="form-group">
-              <label for="apiBase">API Base URL</label>
-              <input type="text" id="apiBase" placeholder="https://api.openai.com/v1">
-            </div>
-            <div class="form-group">
-              <label for="modelName">Model</label>
-              <input type="text" id="modelName" placeholder="gpt-4o">
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn-save" id="settingsSave">Save</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Main Content -->
     <main class="main">
-      <!-- Paper List -->
+
+      <!-- Paper List Section -->
       <section class="paper-list-section" id="paperListSection">
-        <div class="section-toolbar">
-          <div class="paper-count" id="paperCount">-- papers</div>
-          <div class="add-paper">
-            <input type="text" class="add-paper-input" id="newPaperInput" placeholder="Add paper: arXiv ID or URL">
-            <button class="add-paper-btn" id="newPaperBtn">+</button>
+        <div class="list-toolbar">
+          <div class="search-box">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="search-input" id="searchInput" placeholder="Filter papers... ( / )">
           </div>
+          <span class="paper-count" id="paperCount">-- papers</span>
         </div>
         <div class="paper-list" id="paperList">
           <div class="loading-state" id="loadingState">
@@ -94,51 +57,176 @@
             <p>Loading papers...</p>
           </div>
           <div class="empty-state hidden" id="emptyState">
-            <div class="empty-icon">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            </div>
+            <svg class="empty-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             <p>No papers available for this date.</p>
           </div>
         </div>
       </section>
 
+      <!-- Horizontal Resize Handle -->
+      <div class="resize-handle-h" id="resizeHandle"></div>
+
       <!-- Detail Panel -->
-      <aside class="detail-panel" id="detailPanel">
+      <section class="detail-panel" id="detailPanel">
         <div class="detail-placeholder" id="detailPlaceholder">
-          <div class="placeholder-icon">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          </div>
-          <p>Select a paper to view details</p>
+          <svg class="placeholder-icon" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <p>Select a paper to read</p>
+          <span class="placeholder-hint">j/k to navigate, Enter to open</span>
         </div>
+
         <div class="detail-content hidden" id="detailContent">
-          <button class="detail-close" id="detailClose">&times;</button>
-          <div class="detail-header">
-            <h2 class="detail-title" id="detailTitle"></h2>
-            <div class="detail-meta">
+          <button class="detail-close" id="detailClose" title="Close (Esc)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+
+          <!-- Reading progress bar -->
+          <div class="reading-progress-track">
+            <div class="reading-progress-bar" id="readingProgress"></div>
+          </div>
+
+          <!-- Upper: Paper Info + TLDR -->
+          <div class="detail-upper" id="detailUpper">
+            <div class="detail-header">
+              <h2 class="detail-title" id="detailTitle"></h2>
               <div class="detail-authors" id="detailAuthors"></div>
               <div class="detail-affiliations" id="detailAffiliations"></div>
-              <div class="detail-links" id="detailLinks"></div>
+              <div class="detail-actions">
+                <div class="detail-links" id="detailLinks"></div>
+                <div class="detail-score" id="detailStars"></div>
+              </div>
             </div>
+            <div class="detail-tldr" id="detailTldr"></div>
           </div>
-          <div class="detail-stars" id="detailStars"></div>
-          <div class="detail-tldr" id="detailTldr"></div>
 
-          <!-- Chat Section -->
-          <div class="chat-section">
-            <div class="chat-divider">
-              <span>LLM Conversation</span>
+          <!-- Vertical Resize Handle -->
+          <div class="resize-handle-v" id="resizeHandleV"></div>
+
+          <!-- Lower: Chat Section -->
+          <div class="chat-section" id="chatSection">
+            <div class="chat-label">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>Chat</span>
             </div>
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-area">
-              <textarea class="chat-input" id="chatInput" placeholder="Ask about this paper..." rows="2"></textarea>
-              <button class="chat-send" id="chatSend">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              <textarea class="chat-input" id="chatInput" placeholder="Ask about this paper..." rows="1"></textarea>
+              <button class="chat-send" id="chatSend" title="Send (Enter)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
             </div>
           </div>
         </div>
-      </aside>
+      </section>
     </main>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>Settings</h2>
+          <button class="modal-close" id="settingsClose">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-section">
+            <h3 class="settings-section-title">LLM Configuration</h3>
+            <div class="form-group">
+              <label>Mode</label>
+              <div class="radio-group">
+                <label class="radio-card">
+                  <input type="radio" name="llmMode" value="server" checked>
+                  <div class="radio-card-content">
+                    <span class="radio-card-title">Server</span>
+                    <span class="radio-card-desc">Use server-side API key</span>
+                  </div>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="llmMode" value="client">
+                  <div class="radio-card-content">
+                    <span class="radio-card-title">Client</span>
+                    <span class="radio-card-desc">Use your own API key</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div id="serverSettings">
+              <div class="form-group">
+                <label for="serverPassword">Server Password</label>
+                <input type="password" id="serverPassword" placeholder="Enter password...">
+                <div class="form-hint" id="serverHint"></div>
+              </div>
+            </div>
+            <div id="clientSettings" class="hidden">
+              <div class="form-group">
+                <label for="apiKey">API Key</label>
+                <input type="password" id="apiKey" placeholder="sk-...">
+              </div>
+              <div class="form-group">
+                <label for="apiBase">Base URL</label>
+                <input type="text" id="apiBase" placeholder="https://api.openai.com/v1">
+              </div>
+              <div class="form-group">
+                <label for="modelName">Model</label>
+                <input type="text" id="modelName" placeholder="gpt-4o">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3 class="settings-section-title">Email</h3>
+            <div class="form-group">
+              <label for="emailReceivers">Recipients</label>
+              <input type="text" id="emailReceivers" placeholder="email1@example.com, email2@...">
+              <div class="form-hint">Comma-separated email addresses</div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="emailHour">Hour</label>
+                <input type="number" id="emailHour" min="0" max="23" placeholder="9">
+              </div>
+              <div class="form-group">
+                <label for="emailMinute">Minute</label>
+                <input type="number" id="emailMinute" min="0" max="59" placeholder="0">
+              </div>
+            </div>
+            <div class="form-hint" id="smtpHint"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="sendNowBtn">Send Now</button>
+          <button class="btn-primary" id="settingsSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Paper Modal -->
+    <div class="modal-overlay" id="addPaperModal">
+      <div class="modal modal-sm">
+        <div class="modal-header">
+          <h2>Add Paper</h2>
+          <button class="modal-close" id="addPaperClose">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="newPaperInput">arXiv ID or URL</label>
+            <input type="text" id="newPaperInput" placeholder="e.g. 2401.12345 or https://arxiv.org/abs/...">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-primary" id="newPaperSubmit">
+            <span class="btn-text">Add Paper</span>
+            <span class="btn-loader hidden"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
   </div>
   <script src="/static/app.js"></script>
 </body>
