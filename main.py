@@ -1,5 +1,6 @@
 import arxiv
 import argparse
+import datetime
 import os
 import sys
 from dotenv import load_dotenv
@@ -8,6 +9,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from pyzotero import zotero
 from recommender import rerank_paper
 from construct_email import render_email, send_email
+from storage import save_daily_papers
 from tqdm import trange,tqdm
 from loguru import logger
 from gitignore_parser import parse_gitignore
@@ -142,10 +144,9 @@ if __name__ == '__main__':
         default="English",
     )
     parser.add_argument('--debug', action='store_true', help='Debug mode')
+    parser.add_argument('--web_only', action='store_true', help='Only fetch papers and save JSON for the web interface (skip Zotero reranking and email)')
     args = parser.parse_args()
-    assert (
-        not args.use_llm_api or args.openai_api_key is not None
-    )  # If use_llm_api is True, openai_api_key must be provided
+
     if args.debug:
         logger.remove()
         logger.add(sys.stdout, level="DEBUG")
@@ -154,33 +155,72 @@ if __name__ == '__main__':
         logger.remove()
         logger.add(sys.stdout, level="INFO")
 
-    logger.info("Retrieving Zotero corpus...")
-    corpus = get_zotero_corpus(args.zotero_id, args.zotero_key)
-    logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
-    if args.zotero_ignore:
-        logger.info(f"Ignoring papers in:\n {args.zotero_ignore}...")
-        corpus = filter_corpus(corpus, args.zotero_ignore)
-        logger.info(f"Remaining {len(corpus)} papers after filtering.")
-    logger.info("Retrieving Arxiv papers...")
-    papers = get_arxiv_paper(args.arxiv_query, args.debug)
-    if len(papers) == 0:
-        logger.info("No new papers found. Yesterday maybe a holiday and no one submit their work :). If this is not the case, please check the ARXIV_QUERY.")
-        if not args.send_empty:
-          exit(0)
-    else:
-        logger.info("Reranking papers...")
-        papers = rerank_paper(papers, corpus)
-        if args.max_paper_num != -1:
-            papers = papers[:args.max_paper_num]
+    if args.web_only:
+        # Simplified mode: fetch papers, generate LLM analysis, save JSON only
+        assert args.arxiv_query or args.debug, "Must provide --arxiv_query or --debug for --web_only mode"
         if args.use_llm_api:
-            logger.info("Using OpenAI API as global LLM.")
+            assert args.openai_api_key is not None
             set_global_llm(api_key=args.openai_api_key, base_url=args.openai_api_base, model=args.model_name, lang=args.language)
         else:
-            logger.info("Using Local LLM as global LLM.")
             set_global_llm(lang=args.language)
 
-    html = render_email(papers)
-    logger.info("Sending email...")
-    send_email(args.sender, args.receiver, args.sender_password, args.smtp_server, args.smtp_port, html)
-    logger.success("Email sent successfully! If you don't receive the email, please check the configuration and the junk box.")
+        logger.info("Retrieving Arxiv papers...")
+        papers = get_arxiv_paper(args.arxiv_query or 'cat:cs.AI', args.debug)
+        if len(papers) == 0:
+            logger.info("No new papers found.")
+            exit(0)
+
+        if args.max_paper_num != -1:
+            papers = papers[:args.max_paper_num]
+
+        # Assign dummy scores (no Zotero reranking)
+        for i, p in enumerate(papers):
+            p.score = max(10 - i * 0.3, 5)
+
+        logger.info(f"Processing {len(papers)} papers for web...")
+        html = render_email(papers)  # This triggers highlight/tldr/affiliations computation
+
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        save_daily_papers(papers, today)
+        logger.success(f"Saved {len(papers)} papers to data/{today}.json")
+    else:
+        # Full pipeline: Zotero + rerank + email + save
+        assert (
+            not args.use_llm_api or args.openai_api_key is not None
+        )  # If use_llm_api is True, openai_api_key must be provided
+
+        logger.info("Retrieving Zotero corpus...")
+        corpus = get_zotero_corpus(args.zotero_id, args.zotero_key)
+        logger.info(f"Retrieved {len(corpus)} papers from Zotero.")
+        if args.zotero_ignore:
+            logger.info(f"Ignoring papers in:\n {args.zotero_ignore}...")
+            corpus = filter_corpus(corpus, args.zotero_ignore)
+            logger.info(f"Remaining {len(corpus)} papers after filtering.")
+        logger.info("Retrieving Arxiv papers...")
+        papers = get_arxiv_paper(args.arxiv_query, args.debug)
+        if len(papers) == 0:
+            logger.info("No new papers found. Yesterday maybe a holiday and no one submit their work :). If this is not the case, please check the ARXIV_QUERY.")
+            if not args.send_empty:
+              exit(0)
+        else:
+            logger.info("Reranking papers...")
+            papers = rerank_paper(papers, corpus)
+            if args.max_paper_num != -1:
+                papers = papers[:args.max_paper_num]
+            if args.use_llm_api:
+                logger.info("Using OpenAI API as global LLM.")
+                set_global_llm(api_key=args.openai_api_key, base_url=args.openai_api_base, model=args.model_name, lang=args.language)
+            else:
+                logger.info("Using Local LLM as global LLM.")
+                set_global_llm(lang=args.language)
+
+        html = render_email(papers)
+
+        # Save papers to JSON for the web interface
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        save_daily_papers(papers, today)
+
+        logger.info("Sending email...")
+        send_email(args.sender, args.receiver, args.sender_password, args.smtp_server, args.smtp_port, html)
+        logger.success("Email sent successfully! If you don't receive the email, please check the configuration and the junk box.")
 

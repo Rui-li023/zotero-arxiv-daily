@@ -15,30 +15,43 @@ import time
 class ArxivPaper:
     def __init__(self,paper:arxiv.Result):
         self._paper = paper
+        self._data = None
         self.score = None
     
     @property
     def title(self) -> str:
+        if self._paper is None:
+            return self._data["title"]
         return self._paper.title
-    
+
     @property
     def summary(self) -> str:
+        if self._paper is None:
+            return self._data["summary"]
         return self._paper.summary
-    
+
     @property
     def authors(self) -> list[str]:
+        if self._paper is None:
+            return self._data["authors"]
         return self._paper.authors
-    
+
     @cached_property
     def arxiv_id(self) -> str:
+        if self._paper is None:
+            return self._data["arxiv_id"]
         return re.sub(r'v\d+$', '', self._paper.get_short_id())
-    
+
     @property
     def pdf_url(self) -> str:
+        if self._paper is None:
+            return self._data["pdf_url"]
         return self._paper.pdf_url
     
     @cached_property
     def code_url(self) -> Optional[str]:
+        if self._paper is None:
+            return self._data.get("code_url")
         s = requests.Session()
         retries = Retry(total=5, backoff_factor=0.1)
         s.mount('https://', HTTPAdapter(max_retries=retries))
@@ -152,6 +165,8 @@ class ArxivPaper:
     @cached_property
     def highlight(self) -> str:
         """生成一句话论文亮点"""
+        if self._paper is None:
+            return self._data.get("highlight", "")
         try:
             llm = get_llm()
             prompt = f"""
@@ -188,6 +203,8 @@ class ArxivPaper:
 
     @cached_property
     def tldr(self) -> str:
+        if self._paper is None:
+            return self._data.get("tldr", "")
         try:
             introduction = ""
             conclusion = ""
@@ -290,8 +307,41 @@ class ArxivPaper:
             # 返回摘要作为后备
             return f'<div class="paper-analysis"><div class="section"><p>{self.summary}</p></div></div>'
 
+    def to_dict(self) -> dict:
+        """Serialize paper data to a dictionary. Call after cached_properties are computed."""
+        authors = [a.name if hasattr(a, 'name') else str(a) for a in self.authors]
+        data = {
+            "arxiv_id": self.arxiv_id,
+            "title": self.title,
+            "summary": self.summary,
+            "authors": authors,
+            "pdf_url": self.pdf_url,
+            "score": self.score,
+        }
+        # Only include cached_properties that have been computed
+        if "code_url" in self.__dict__:
+            data["code_url"] = self.__dict__["code_url"]
+        if "affiliations" in self.__dict__:
+            data["affiliations"] = self.__dict__["affiliations"]
+        if "highlight" in self.__dict__:
+            data["highlight"] = self.__dict__["highlight"]
+        if "tldr" in self.__dict__:
+            data["tldr"] = self.__dict__["tldr"]
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ArxivPaper":
+        """Create a lightweight ArxivPaper from a serialized dictionary."""
+        paper = object.__new__(cls)
+        paper._paper = None
+        paper.score = data.get("score")
+        paper._data = data
+        return paper
+
     @cached_property
     def affiliations(self) -> Optional[list[str]]:
+        if self._paper is None:
+            return self._data.get("affiliations")
         try:
             if self.tex is not None:
                 content = self.tex.get("all")

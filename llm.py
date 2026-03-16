@@ -58,6 +58,35 @@ class LLM:
                 
                 time.sleep(delay)
 
+    def generate_stream(self, messages: list[dict]):
+        """Yield tokens one by one using streaming. Only works with OpenAI-compatible API."""
+        if not isinstance(self.llm, OpenAI):
+            yield self.generate(messages)
+            return
+
+        max_retries = 3
+        base_delay = 1
+        for attempt in range(max_retries):
+            try:
+                stream = self.llm.chat.completions.create(
+                    messages=messages,
+                    temperature=0,
+                    model=self.model,
+                    stream=True,
+                )
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                return
+            except (OpenAIError, Exception) as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Stream max retries reached: {e}")
+                    raise
+                delay = 2 ** attempt * base_delay + random.uniform(0, 0.1 * (2 ** attempt))
+                logger.warning(f"Stream attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {delay:.2f}s")
+                time.sleep(delay)
+
+
 def set_global_llm(api_key: str = None, base_url: str = None, model: str = None, lang: str = "English"):
     global GLOBAL_LLM
     GLOBAL_LLM = LLM(api_key=api_key, base_url=base_url, model=model, lang=lang)
