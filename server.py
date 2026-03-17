@@ -266,31 +266,18 @@ async def get_fulltext(arxiv_id: str):
 
 @app.get("/api/paper/{arxiv_id:path}/content")
 async def get_paper_content(arxiv_id: str):
-    """获取论文内容（优先HTML全文，其次PDF的base64）"""
+    """获取论文内容（优先PDF）"""
     import base64
 
     try:
-        # 先尝试获取HTML全文
-        client = arxiv.Client()
-        search = arxiv.Search(id_list=[arxiv_id])
-        results = list(client.results(search))
-        if not results:
-            raise HTTPException(status_code=404, detail="Paper not found on arXiv")
-
-        paper = ArxivPaper(results[0])
-        full_text = paper.full_text
-
-        if full_text:
-            return {"arxiv_id": arxiv_id, "type": "html", "content": full_text}
-
-        # 没有HTML，尝试获取PDF
+        # 优先获取PDF
         pdf_path = get_or_download_pdf(arxiv_id)
         if pdf_path and pdf_path.exists():
             with open(pdf_path, "rb") as f:
                 pdf_base64 = base64.b64encode(f.read()).decode("utf-8")
             return {"arxiv_id": arxiv_id, "type": "pdf", "content": pdf_base64}
 
-        raise HTTPException(status_code=404, detail="No content available for this paper")
+        raise HTTPException(status_code=404, detail="No PDF available for this paper")
     except HTTPException:
         raise
     except Exception as e:

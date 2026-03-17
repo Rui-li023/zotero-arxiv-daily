@@ -688,14 +688,14 @@ body::after {
 .card-expand-chat-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--gold-dim);
   color: var(--gold);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.76rem;
   font-weight: 500;
-  padding: 6px 14px;
+  padding: 4px 12px;
   border-radius: var(--r-xl);
   cursor: pointer;
   transition: all 0.2s ease;
@@ -704,7 +704,7 @@ body::after {
 
 .card-expand-chat-btn:hover {
   background: var(--gold-glow-strong);
-  border-color: var(--gold-dim);
+  border-color: var(--gold);
   box-shadow: var(--shadow-glow);
 }
 
@@ -1265,6 +1265,43 @@ body.resizing-v * {
   color: var(--error);
   font-family: var(--font-mono);
   font-size: 0.76rem;
+}
+
+/* Chat message action buttons */
+.chat-msg-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.chat-msg.assistant:hover .chat-msg-actions {
+  opacity: 1;
+}
+
+.chat-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.chat-action-btn:hover {
+  color: var(--gold);
+  background: var(--gold-glow);
+}
+
+.chat-action-btn svg {
+  flex-shrink: 0;
 }
 
 /* Scroll to bottom button */

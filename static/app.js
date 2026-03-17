@@ -576,12 +576,14 @@ function createPaperCard(paper, idx) {
       <span class="card-id">${escapeHtml(paper.arxiv_id)}</span>
     </div>
     <div class="card-expand">
-      <div class="card-expand-links">${linksHtml}</div>
+      <div class="card-expand-links">
+        ${linksHtml}
+        <button class="card-expand-chat-btn" data-arxiv-id="${escapeHtml(paper.arxiv_id)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Chat
+        </button>
+      </div>
       <div class="card-expand-tldr">${tldrContent || '<p class="no-tldr">No analysis available</p>'}</div>
-      <button class="card-expand-chat-btn" data-arxiv-id="${escapeHtml(paper.arxiv_id)}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Chat about this paper
-      </button>
     </div>
   `;
 
@@ -790,14 +792,8 @@ async function autoAnalyze(paper) {
         }
       ]
     };
-  } else if (paperContent?.type === 'html') {
-    // HTML全文作为文本附加
-    systemMsg = {
-      role: 'system',
-      content: systemContent + '\n\n--- Paper Full Text ---\n' + paperContent.content
-    };
   } else {
-    // 没有全文，只用摘要
+    // 没有PDF，只用摘要
     systemMsg = { role: 'system', content: systemContent };
   }
 
@@ -832,6 +828,27 @@ async function sendChat() {
   await streamChat(id);
 }
 
+async function regenerateLastResponse() {
+  if (state.streaming || !state.selectedPaper) return;
+  const id = state.selectedPaper.arxiv_id;
+  const history = state.chatHistories[id];
+  if (!history || history.length === 0) return;
+
+  // Remove last assistant message from history
+  while (history.length > 0 && history[history.length - 1].role === 'assistant') {
+    history.pop();
+  }
+  if (history.length === 0) return;
+
+  // Remove last assistant bubble(s) from DOM
+  const bubbles = dom.chatMessages.querySelectorAll('.chat-msg.assistant');
+  if (bubbles.length > 0) {
+    bubbles[bubbles.length - 1].remove();
+  }
+
+  await streamChat(id);
+}
+
 async function streamChat(arxivId) {
   // Abort any in-flight stream for a different paper
   if (currentAbortController) {
@@ -849,7 +866,10 @@ async function streamChat(arxivId) {
 
   // Create assistant bubble with typing indicator
   const bubble = appendChatBubble('assistant', '');
-  bubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+  const bubbleContent = bubble.querySelector('.chat-msg-content');
+  const bubbleActions = bubble.querySelector('.chat-msg-actions');
+  if (bubbleActions) bubbleActions.style.display = 'none';
+  bubbleContent.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
 
   const messages = state.chatHistories[arxivId];
   const body = { messages };
@@ -902,7 +922,7 @@ async function streamChat(arxivId) {
             // Only update DOM if this stream is still for the active paper
             if (currentStreamPaperId === arxivId && bubble.isConnected) {
               bubble.classList.add('streaming-cursor');
-              bubble.innerHTML = renderMarkdown(fullText);
+              bubbleContent.innerHTML = renderMarkdown(fullText);
               scrollChatToBottom();
             }
           }
@@ -925,17 +945,23 @@ async function streamChat(arxivId) {
       if (!fullText) {
         bubble.classList.remove('streaming-cursor');
         bubble.classList.add('error');
-        bubble.textContent = `Error: ${e.message}`;
+        bubbleContent.textContent = `Error: ${e.message}`;
       } else {
         const errBubble = appendChatBubble('assistant', '');
         errBubble.classList.add('error');
-        errBubble.textContent = `Stream interrupted: ${e.message}`;
+        const errContent = errBubble.querySelector('.chat-msg-content');
+        if (errContent) errContent.textContent = `Stream interrupted: ${e.message}`;
       }
     }
   }
 
   if (bubble.isConnected) {
     bubble.classList.remove('streaming-cursor');
+    // Show action buttons and store raw content
+    if (fullText) {
+      bubble.dataset.rawContent = fullText;
+      if (bubbleActions) bubbleActions.style.display = '';
+    }
   }
 
   // Clean up
@@ -958,7 +984,51 @@ function appendChatBubble(role, content) {
   const div = document.createElement('div');
   div.className = `chat-msg ${role}`;
   if (role === 'system') return div; // don't display
-  div.innerHTML = role === 'assistant' ? renderMarkdown(content) : escapeHtml(content).replace(/\n/g, '<br>');
+
+  if (role === 'assistant') {
+    // Wrap content in a container so action buttons sit below
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'chat-msg-content';
+    contentDiv.innerHTML = renderMarkdown(content);
+    div.appendChild(contentDiv);
+    div.dataset.rawContent = content; // store raw markdown for "copy original"
+
+    const actions = document.createElement('div');
+    actions.className = 'chat-msg-actions';
+    actions.innerHTML = `
+      <button class="chat-action-btn" data-action="copy" title="Copy">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <span>Copy</span>
+      </button>
+      <button class="chat-action-btn" data-action="copy-raw" title="Copy Markdown">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span>Copy Markdown</span>
+      </button>
+      <button class="chat-action-btn" data-action="regenerate" title="Regenerate">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        <span>Regenerate</span>
+      </button>
+    `;
+    div.appendChild(actions);
+
+    actions.addEventListener('click', (e) => {
+      const btn = e.target.closest('.chat-action-btn');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const msgEl = btn.closest('.chat-msg');
+      if (action === 'copy') {
+        const content = msgEl.querySelector('.chat-msg-content');
+        copyToClipboard(content ? content.innerText : '').then(() => showToast('Copied'));
+      } else if (action === 'copy-raw') {
+        copyToClipboard(msgEl.dataset.rawContent || '').then(() => showToast('Markdown copied'));
+      } else if (action === 'regenerate') {
+        regenerateLastResponse();
+      }
+    });
+  } else {
+    div.innerHTML = escapeHtml(content).replace(/\n/g, '<br>');
+  }
+
   dom.chatMessages.appendChild(div);
   scrollChatToBottom();
   return div;
@@ -1037,6 +1107,22 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  // Fallback for non-HTTPS (e.g. HTTP localhost)
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  return Promise.resolve();
 }
 
 function renderMarkdown(text) {
