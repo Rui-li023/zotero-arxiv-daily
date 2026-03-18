@@ -250,9 +250,13 @@
           </button>
         </div>
         <div class="modal-body">
-          <div class="form-group">
+          <div class="form-group" id="addPaperFormGroup">
             <label for="newPaperInput">arXiv ID or URL</label>
             <input type="text" id="newPaperInput" placeholder="e.g. 2401.12345 or https://arxiv.org/abs/...">
+          </div>
+          <div class="add-paper-loading hidden" id="addPaperLoading">
+            <div class="add-paper-loading-spinner"></div>
+            <div class="add-paper-loading-text" id="addPaperLoadingText">Fetching paper metadata...</div>
           </div>
         </div>
         <div class="modal-footer">

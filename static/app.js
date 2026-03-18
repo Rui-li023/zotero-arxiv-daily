@@ -1250,10 +1250,28 @@ async function addNewPaper() {
   const submitBtn = dom.newPaperSubmit;
   const btnText = submitBtn.querySelector('.btn-text');
   const btnLoader = submitBtn.querySelector('.btn-loader');
+  const formGroup = document.getElementById('addPaperFormGroup');
+  const loadingEl = document.getElementById('addPaperLoading');
+  const loadingText = document.getElementById('addPaperLoadingText');
 
+  // Show loading state
   btnText.classList.add('hidden');
   btnLoader.classList.remove('hidden');
   submitBtn.disabled = true;
+  formGroup.classList.add('hidden');
+  loadingEl.classList.remove('hidden');
+  loadingText.textContent = 'Fetching paper metadata from arXiv...';
+
+  // Animate loading text to show progress
+  const loadingSteps = [
+    { text: 'Downloading PDF...', delay: 3000 },
+    { text: 'Analyzing paper with AI...', delay: 6000 },
+    { text: 'Generating summary...', delay: 12000 },
+    { text: 'Almost done...', delay: 25000 },
+  ];
+  const timers = loadingSteps.map(step =>
+    setTimeout(() => { loadingText.textContent = step.text; }, step.delay)
+  );
 
   try {
     const resp = await api('/api/paper/new', {
@@ -1282,9 +1300,12 @@ async function addNewPaper() {
   } catch (e) {
     showToast(`Failed: ${e.message}`, 'error');
   } finally {
+    timers.forEach(clearTimeout);
     btnText.classList.remove('hidden');
     btnLoader.classList.add('hidden');
     submitBtn.disabled = false;
+    formGroup.classList.remove('hidden');
+    loadingEl.classList.add('hidden');
   }
 }
 

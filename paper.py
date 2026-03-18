@@ -202,37 +202,59 @@ class ArxivPaper:
             logger.warning(f"Failed to generate highlight for {self.arxiv_id}: {e}")
             return "论文简介暂时无法生成"
 
+    def _build_tldr_user_content(self, prompt_text: str):
+        """Build user message content for TLDR generation.
+        Tries to include PDF as multimodal file content; falls back to text-only."""
+        try:
+            from storage import get_or_download_pdf
+            import base64
+            pdf_path = get_or_download_pdf(self.arxiv_id)
+            if pdf_path and pdf_path.exists():
+                with open(pdf_path, "rb") as f:
+                    pdf_b64 = base64.b64encode(f.read()).decode("utf-8")
+                logger.info(f"Including PDF content for TLDR generation of {self.arxiv_id}")
+                return [
+                    {"type": "text", "text": prompt_text},
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": f"{self.arxiv_id.replace('/', '_')}.pdf",
+                            "file_data": f"data:application/pdf;base64,{pdf_b64}",
+                        },
+                    },
+                ]
+        except Exception as e:
+            logger.warning(f"Failed to load PDF for TLDR of {self.arxiv_id}, using text-only: {e}")
+        # Fallback: text-only with TeX intro/conclusion if available
+        introduction = ""
+        conclusion = ""
+        if self.tex is not None:
+            content = self.tex.get("all")
+            if content is None:
+                content = "\n".join(self.tex.values())
+            content = re.sub(r'~?\\cite.?\{.*?\}', '', content)
+            content = re.sub(r'\\begin\{figure\}.*?\\end\{figure\}', '', content, flags=re.DOTALL)
+            content = re.sub(r'\\begin\{table\}.*?\\end\{table\}', '', content, flags=re.DOTALL)
+            match = re.search(r'\\section\{Introduction\}.*?(\\section|\\end\{document\}|\\bibliography|\\appendix|$)', content, flags=re.DOTALL)
+            if match:
+                introduction = match.group(0)
+            match = re.search(r'\\section\{Conclusion\}.*?(\\section|\\end\{document\}|\\bibliography|\\appendix|$)', content, flags=re.DOTALL)
+            if match:
+                conclusion = match.group(0)
+        if introduction or conclusion:
+            return prompt_text + f"\n\n引言:\n{introduction}\n\n结论:\n{conclusion}"
+        return prompt_text
+
     @cached_property
     def tldr(self) -> str:
         if self._paper is None:
             return self._data.get("tldr", "")
         try:
-            introduction = ""
-            conclusion = ""
-            if self.tex is not None:
-                content = self.tex.get("all")
-                if content is None:
-                    content = "\n".join(self.tex.values())
-                #remove cite
-                content = re.sub(r'~?\\cite.?\{.*?\}', '', content)
-                #remove figure
-                content = re.sub(r'\\begin\{figure\}.*?\\end\{figure\}', '', content, flags=re.DOTALL)
-                #remove table
-                content = re.sub(r'\\begin\{table\}.*?\\end\{table\}', '', content, flags=re.DOTALL)
-                #find introduction and conclusion
-                match = re.search(r'\\section\{Introduction\}.*?(\\section|\\end\{document\}|\\bibliography|\\appendix|$)', content, flags=re.DOTALL)
-                if match:
-                    introduction = match.group(0)
-                match = re.search(r'\\section\{Conclusion\}.*?(\\section|\\end\{document\}|\\bibliography|\\appendix|$)', content, flags=re.DOTALL)
-                if match:
-                    conclusion = match.group(0)
             llm = get_llm()
-            prompt = f"""
+            prompt_text = f"""
 # 待分析论文
 标题: {self.title}
 摘要: {self.summary}
-引言: {introduction}
-结论: {conclusion}
 
 # 输出要求
 请严格按照以下HTML模板输出论文分析，不要修改HTML结构和class名称：
@@ -242,7 +264,7 @@ class ArxivPaper:
     <h3>核心创新</h3>
     <p>[用2-3句话说明论文的核心创新点和技术贡献]</p>
   </div>
-  
+
   <div class="section">
     <h3>技术细节</h3>
     <ul>
@@ -251,12 +273,12 @@ class ArxivPaper:
       <li><strong>关键技术：</strong>[使用的关键技术或算法]</li>
     </ul>
   </div>
-  
+
   <div class="section">
     <h3>实验与结果</h3>
     <p>[实验设置和主要结果，包括与baseline的对比]</p>
   </div>
-  
+
   <div class="section">
     <h3>优势与局限</h3>
     <ul>
@@ -264,7 +286,7 @@ class ArxivPaper:
       <li><strong>局限：</strong>[可能存在的问题或局限性]</li>
     </ul>
   </div>
-  
+
   <div class="section">
     <h3>相关方向</h3>
     <p><strong>关键词：</strong>[5-8个相关研究关键词，用逗号分隔]</p>
@@ -277,14 +299,16 @@ class ArxivPaper:
 3. 每个部分内容要具体、有信息量
 4. 不要使用代码块包裹，直接输出HTML
 """
-            
+            # Try to include full PDF for richer analysis
+            user_content = self._build_tldr_user_content(prompt_text)
+
             tldr = llm.generate(
                 messages=[
                     {
                         "role": "system",
                         "content": "你是一位资深的人工智能研究员，擅长深度分析论文并提炼关键信息。你必须严格按照用户提供的HTML模板输出结果。",
                     },
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": user_content},
                 ]
             )
             logger.info(f"Generated TLDR for {self.arxiv_id}")
