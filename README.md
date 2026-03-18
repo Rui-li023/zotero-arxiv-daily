@@ -12,213 +12,209 @@
   [![GitHub Issues](https://img.shields.io/github/issues/TideDra/zotero-arxiv-daily)](https://github.com/TideDra/zotero-arxiv-daily/issues)
   [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/TideDra/zotero-arxiv-daily)](https://github.com/TideDra/zotero-arxiv-daily/pulls)
   [![License](https://img.shields.io/github/license/TideDra/zotero-arxiv-daily)](/LICENSE)
-  [<img src="https://api.gitsponsors.com/api/badge/img?id=893025857" height="20">](https://api.gitsponsors.com/api/badge/link?p=PKMtRut1dWWuC1oFdJweyDSvJg454/GkdIx4IinvBblaX2AY4rQ7FYKAK1ZjApoiNhYEeduIEhfeZVIwoIVlvcwdJXVFD2nV2EE5j6lYXaT/RHrcsQbFl3aKe1F3hliP26OMayXOoZVDidl05wj+yg==)
 
 </div>
 
 ---
 
-<p align="center"> Your personal AI-powered research paper reading platform — discover, read, and discuss new arXiv papers tailored to your Zotero library.
+<p align="center"> AI 驱动的个人论文阅读平台 — 基于你的 Zotero 文献库，每日自动发现、推荐并解读 arXiv 新论文。
     <br>
 </p>
 
-> [!IMPORTANT]
-> Please keep an eye on this repo, and merge your forked repo in time when there is any update of this upstream, in order to enjoy new features and fix found bugs.
-
-## 🧐 About <a name = "about"></a>
-
-*Zotero-arXiv-Daily* is an intelligent research paper reading platform that automatically discovers new arXiv papers matching your research interests based on your Zotero library.
-
-It provides a **web interface** where you can browse, search, and read recommended papers with AI-generated summaries — and even chat with an LLM about any paper. It also supports **email delivery** for receiving daily recommendations in your inbox, deployable as a free GitHub Actions workflow.
-
-## ✨ Features
-
-### Web Reading Platform
-- **Paper Browser** — Browse daily recommended papers sorted by relevance to your research, with date navigation and search filtering.
-- **AI-Powered Analysis** — Each paper comes with a one-line highlight and a structured TL;DR covering core innovation, methods, experiments, strengths, and limitations.
-- **LLM Chat** — Chat with an LLM in the context of any paper. Supports streaming responses, persistent chat history, and auto-analysis on first view.
-- **PDF & Fulltext** — View PDFs directly in-browser and read the extracted fulltext of papers.
-- **Settings Panel** — Configure LLM mode (server/client API key), email schedule, and chat prompts from the web UI.
-- **Keyboard Shortcuts** — Navigate papers with arrow keys, close panels with Escape, and more.
-- **Midnight Study Theme** — A carefully designed dark theme with warm amber accents and editorial typography for comfortable reading.
-
-### Intelligent Recommendation
-- **Embedding-Based Matching** — Papers are ranked by semantic similarity to your Zotero library, not just keywords.
-- **Time-Decay Weighting** — Recent additions to your Zotero library are weighted higher, reflecting your evolving interests.
-- **Configurable Categories** — Target specific arXiv categories (e.g., cs.AI, cs.CV, cs.CL, cs.LG).
-- **Gitignore-Style Filtering** — Exclude unwanted Zotero collections using pattern rules.
-
-### Paper Metadata
-- **Author Affiliations** — Automatically extracted from LaTeX source files.
-- **Code Links** — GitHub repositories found via the Papers with Code API.
-- **Multi-Language Support** — TL;DR generation in English, Chinese, or any language via prompt configuration.
-
-### Email Delivery
-- **Daily Email Reports** — Receive paper recommendations as styled HTML emails.
-- **Scheduled Delivery** — Configurable send time with support for multiple receivers.
-- **GitHub Actions** — Zero-cost automated deployment with no installation required.
-
-## 📷 Screenshot
 ![screenshot](./assets/screenshot.png)
 
-## 🚀 Usage
+## 关于
 
-### Web Server (Recommended)
+**Zotero-arXiv-Daily** 是一个以 Web 为核心的论文阅读平台。它每天自动抓取 arXiv 新论文，通过语义嵌入匹配你的 Zotero 文献库进行智能排序，并利用 LLM 生成论文摘要与分析。你可以在浏览器中浏览、搜索、阅读论文全文，并与 LLM 就论文内容进行对话。
 
-The web server provides the full paper reading experience with a browser-based UI, LLM chat, and daily scheduled delivery.
+## 核心功能
 
-#### 1. Configure environment variables
+### 论文浏览与阅读
+- **智能推荐排序** — 基于你的 Zotero 文献库语义匹配，越近期添加的文献权重越高
+- **日期导航** — 按日期浏览每天推荐的论文，支持前后翻页
+- **搜索过滤** — 按标题、作者、机构、摘要关键词快速筛选
+- **PDF 阅读** — 在浏览器中直接查看论文 PDF
+- **全文提取** — 自动解析 arXiv HTML 版本，提供纯文本阅读体验
+- **代码链接** — 自动从 Papers with Code 获取 GitHub 仓库链接
 
-Copy the example file and fill in your values:
+### AI 分析与对话
+- **一句话亮点** — LLM 自动生成论文核心创新的精简概括
+- **结构化 TL;DR** — 涵盖核心创新、方法、实验、优缺点的深度分析
+- **论文对话** — 针对每篇论文与 LLM 实时对话，支持流式输出
+- **自动分析** — 首次打开论文时自动触发 LLM 分析
+- **持久化聊天记录** — 每篇论文的对话历史自动保存
+- **作者机构提取** — 从 LaTeX 源文件自动识别作者单位
+
+### Web 界面
+- **深色/浅色主题** — 精心设计的 Midnight Study 暗色主题，搭配暖金色调
+- **可调分栏布局** — 左侧论文列表 + 右侧详情与对话面板，分割线可拖拽
+- **快捷键操作** — `j/k` 导航论文、`/` 聚焦搜索、`Enter` 展开、`Esc` 关闭
+- **设置面板** — 在 Web 界面中直接配置 LLM、邮件、主题等参数
+
+### 邮件推送
+- **每日邮件报告** — 精美 HTML 格式的论文推荐邮件
+- **定时发送** — 可配置发送时间，支持多收件人
+- **GitHub Actions** — 零成本自动化部署，无需服务器
+
+## 快速开始
+
+### 环境要求
+
+- Python >= 3.11
+
+### 1. 安装
+
+克隆项目：
+
+```bash
+git clone https://github.com/TideDra/zotero-arxiv-daily.git
+cd zotero-arxiv-daily
+```
+
+选择以下任一方式安装依赖：
+
+<details>
+<summary><b>方式 A：使用 uv（推荐）</b></summary>
+
+```bash
+# 安装 uv（如尚未安装）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 安装依赖
+uv sync
+```
+
+</details>
+
+<details>
+<summary><b>方式 B：使用 pip</b></summary>
+
+```bash
+# 创建虚拟环境
+python -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# .venv\Scripts\activate   # Windows
+
+# 安装依赖
+pip install -e .
+```
+
+</details>
+
+<details>
+<summary><b>方式 C：使用 conda</b></summary>
+
+```bash
+# 创建 conda 环境
+conda create -n zotero-arxiv python=3.11 -y
+conda activate zotero-arxiv
+
+# 安装依赖
+pip install -e .
+```
+
+</details>
+
+### 2. 配置
+
+复制示例环境变量文件并填入你的参数（也可跳过此步，首次访问 Web 界面时会自动显示配置向导）：
 
 ```bash
 cp .env.example .env
 ```
 
-Key variables in `.env`:
+编辑 `.env` 文件：
 
-| Variable | Required | Description |
+| 变量 | 必填 | 说明 |
 | :--- | :---: | :--- |
-| `OPENAI_API_KEY` | ✅ | API key for LLM (OpenAI, SiliconFlow, etc.) |
-| `OPENAI_API_BASE` | | API base URL (default: `https://api.openai.com/v1`) |
-| `MODEL_NAME` | | Model name (default: `gpt-4o`) |
-| `LANGUAGE` | | Language for paper analysis (default: `English`) |
-| `ARXIV_QUERY` | ✅ | arXiv categories, e.g. `cat:cs.AI+cat:cs.CV+cat:cs.LG` |
-| `MAX_PAPER_NUM` | | Max papers per day (default: `25`) |
-| `SMTP_SERVER` | | SMTP server for email delivery |
-| `SMTP_PORT` | | SMTP port (default: `465`) |
-| `SENDER` | | Sender email address |
-| `SENDER_PASSWORD` | | SMTP auth code |
-| `RECEIVER` | | Fallback receiver email |
-| `SERVER_LLM_PASSWORD` | | Password to protect server-side LLM access |
+| `OPENAI_API_KEY` | ✅ | LLM API 密钥（兼容 OpenAI、SiliconFlow 等） |
+| `OPENAI_API_BASE` | | API 地址（默认 `https://api.openai.com/v1`） |
+| `MODEL_NAME` | | 模型名称（默认 `gpt-4o`） |
+| `LANGUAGE` | | 分析语言（默认 `English`） |
+| `ARXIV_QUERY` | ✅ | arXiv 分类，如 `cat:cs.AI+cat:cs.CV+cat:cs.LG` |
+| `MAX_PAPER_NUM` | | 每日最大论文数（默认 `25`，`-1` 为不限） |
+| `SMTP_SERVER` | | 邮件 SMTP 服务器 |
+| `SMTP_PORT` | | SMTP 端口（默认 `465`） |
+| `SENDER` | | 发件人邮箱 |
+| `SENDER_PASSWORD` | | SMTP 授权码 |
+| `RECEIVER` | | 收件人邮箱（多个用逗号分隔） |
+| `SERVER_LLM_PASSWORD` | | 服务端 LLM 访问密码（留空则不需密码） |
 
-#### 2. Configure runtime settings (optional)
+`config.json` 已包含默认提示词和邮件计划配置，可在 Web 设置面板中修改：
 
-Copy the example config for email schedule and chat prompts:
-
-```bash
-cp config.example.json config.json
-```
-
-`config.json` fields:
-
-| Field | Description |
+| 字段 | 说明 |
 | :--- | :--- |
-| `email_receivers` | List of email addresses to receive daily papers |
-| `email_schedule_hour` | Hour (0-23) to send daily email (default: `9`) |
-| `email_schedule_minute` | Minute (0-59) to send daily email (default: `0`) |
-| `chat_system_prompt` | System prompt for LLM chat (supports `{title}`, `{summary}`, `{arxiv_id}` placeholders) |
-| `chat_auto_analyze_prompt` | Prompt for auto-analyzing a paper when first opened |
+| `email_schedule_hour` | 每日发送时刻（0-23，默认 `9`） |
+| `email_schedule_minute` | 每日发送分钟（0-59，默认 `0`） |
+| `chat_system_prompt` | 对话系统提示词（支持 `{title}`、`{summary}`、`{arxiv_id}` 占位符） |
+| `chat_auto_analyze_prompt` | 自动分析提示词 |
 
-> [!TIP]
-> `config.json` can also be edited from the web UI Settings panel. Both `.env` and `config.json` are in `.gitignore`.
-
-#### 3. Start the server
+### 3. 启动
 
 ```bash
+# 使用 uv
 uv run uvicorn server:app --host 0.0.0.0 --port 8000
+
+# 使用 pip/conda（需先激活虚拟环境）
+uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 
-Then open `http://localhost:8000` in your browser.
+打开浏览器访问 `http://localhost:8000`。首次运行时访问 Web 界面会自动显示配置向导，填写完成后服务器会自动抓取当天的论文。
 
-On first startup, the server will automatically fetch today's papers if no data exists yet. It also runs a daily scheduler at the configured time to fetch new papers and send emails.
+## GitHub Actions 部署（仅邮件）
 
-### GitHub Actions (Email-Only)
+如果只需要每日邮件推送，无需 Web 界面，可通过 GitHub Actions 免费部署：
 
-If you only need daily email delivery without the web interface, you can deploy via GitHub Actions for free.
+1. Fork 本仓库
+2. 在 Settings → Secrets and variables → Actions 中配置以下 Secrets：
 
-1. Fork (and star😘) this repo.
-![fork](./assets/fork.png)
+| Key | 必填 | 说明 |
+| :--- | :---: | :--- |
+| `ZOTERO_ID` | ✅ | Zotero 用户 ID（[获取地址](https://www.zotero.org/settings/security)） |
+| `ZOTERO_KEY` | ✅ | Zotero API Key（需读取权限） |
+| `ARXIV_QUERY` | ✅ | arXiv 分类查询 |
+| `SMTP_SERVER` | ✅ | SMTP 服务器 |
+| `SMTP_PORT` | ✅ | SMTP 端口 |
+| `SENDER` | ✅ | 发件人邮箱 |
+| `SENDER_PASSWORD` | ✅ | SMTP 授权码 |
+| `RECEIVER` | ✅ | 收件人邮箱 |
+| `MAX_PAPER_NUM` | | 最大论文数 |
+| `USE_LLM_API` | | `1` 使用云端 LLM，`0` 使用本地 LLM（默认） |
+| `OPENAI_API_KEY` | | LLM API 密钥 |
+| `OPENAI_API_BASE` | | LLM API 地址 |
+| `MODEL_NAME` | | 模型名称 |
 
-2. Set Github Action environment variables.
-![secrets](./assets/secrets.png)
+可选的 Repository Variables：
 
-Below are all the secrets you need to set. They are invisible to anyone including you once they are set, for security.
+| Key | 说明 |
+| :--- | :--- |
+| `ZOTERO_IGNORE` | Gitignore 风格的 Zotero 文献集过滤规则 |
+| `LANGUAGE` | TL;DR 生成语言 |
 
-| Key | Required | Type |Description | Example |
-| :--- | :---: | :---  | :---  | :--- |
-| ZOTERO_ID | ✅ | str  | User ID of your Zotero account. **User ID is not your username, but a sequence of numbers**Get your ID from [here](https://www.zotero.org/settings/security). You can find it at the position shown in this [screenshot](https://github.com/TideDra/zotero-arxiv-daily/blob/main/assets/userid.png). | 12345678  |
-| ZOTERO_KEY | ✅ | str  | An Zotero API key with read access. Get a key from [here](https://www.zotero.org/settings/security).  | AB5tZ877P2j7Sm2Mragq041H   |
-| ARXIV_QUERY | ✅ | str  | The categories of target arxiv papers. Use `+` to concatenate multiple categories. The example retrieves papers about AI, CV, NLP, ML. Find the abbr of your research area from [here](https://arxiv.org/category_taxonomy).  | cs.AI+cs.CV+cs.LG+cs.CL |
-| SMTP_SERVER | ✅ | str | The SMTP server that sends the email. I recommend to utilize a seldom-used email for this. Ask your email provider (Gmail, QQ, Outlook, ...) for its SMTP server| smtp.qq.com |
-| SMTP_PORT | ✅ | int | The port of SMTP server. | 465 |
-| SENDER | ✅ | str | The email account of the SMTP server that sends you email. | abc@qq.com |
-| SENDER_PASSWORD | ✅ | str | The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. Ask your email provider for this.   | abcdefghijklmn |
-| RECEIVER | ✅ | str | The e-mail address that receives the paper list. | abc@outlook.com |
-| MAX_PAPER_NUM | | int | The maximum number of the papers presented in the email. This value directly affects the execution time of this workflow, because it takes about 70s to generate TL;DR for one paper. `-1` means to present all the papers retrieved. | 50 |
-| SEND_EMPTY | | bool | Whether to send an empty email even if no new papers today. | False |
-| USE_LLM_API | | bool | Whether to use the LLM API in the cloud or to use local LLM. If set to `1`, the API is used. Else if set to `0`, the workflow will download and deploy an open-source LLM. Default to `0`. | 0 |
-| OPENAI_API_KEY | | str | API Key when using the API to access LLMs. You can get FREE API for using advanced open source LLMs in [SiliconFlow](https://cloud.siliconflow.cn/i/b3XhBRAm). | sk-xxx |
-| OPENAI_API_BASE | | str | API URL when using the API to access LLMs. If not filled in, the default is the OpenAI URL. | https://api.siliconflow.cn/v1 |
-| MODEL_NAME | | str | Model name when using the API to access LLMs. If not filled in, the default is gpt-4o. Qwen/Qwen2.5-7B-Instruct is recommended when using [SiliconFlow](https://cloud.siliconflow.cn/i/b3XhBRAm). | Qwen/Qwen2.5-7B-Instruct |
+配置完成后，可在 Actions 页面手动触发 Test-Workflow 进行测试。主工作流每天 UTC 22:00 自动运行。
 
-There are also some public variables (Repository Variables) you can set, which are easy to edit.
-![vars](./assets/repo_var.png)
+## 工作原理
 
-| Key | Required | Type | Description | Example |
-| :--- | :---  | :---  | :--- | :--- |
-| ZOTERO_IGNORE | | str | Gitignore-style patterns marking the Zotero collections that should be ignored. One rule one line. Learn more about [gitignore](https://git-scm.com/docs/gitignore). | AI Agent/<br>**/survey<br>!LLM/survey |
-| REPOSITORY | | str | The repository that provides the workflow. If set, the value can only be `TideDra/zotero-arxiv-daily`, in which case, the workflow always pulls the latest code from this upstream repo, so that you don't need to sync your forked repo upon each update, unless the workflow file is changed. | `TideDra/zotero-arxiv-daily` |
-| REF | | str | The specified ref of the workflow to run. Only valid when REPOSITORY is set to `TideDra/zotero-arxiv-daily`. Currently supported values include `main` for stable version, `dev` for development version which has new features and potential bugs. | `main` |
-| LANGUAGE | | str | The language of TLDR; Its value is directly embeded in the prompt passed to LLM | Chinese |
+1. **论文抓取** — 通过 arXiv RSS 获取指定分类的最新论文
+2. **智能排序** — 使用 GIST-small-Embedding-v0 模型编码论文摘要，计算与 Zotero 库论文的余弦相似度，近期文献权重更高
+3. **LLM 分析** — 提取论文 LaTeX 源文件中的引言与结论，结合标题和摘要，由 LLM 生成结构化分析
+4. **内容获取** — PDF 自动下载缓存，全文从 arXiv HTML 版本解析
+5. **对话交互** — 基于论文上下文与 LLM 实时流式对话
 
-That's all! Now you can test the workflow by manually triggering it:
-![test](./assets/test.png)
+## 技术栈
 
-> [!NOTE]
-> The Test-Workflow Action is the debug version of the main workflow (Send-emails-daily), which always retrieve 5 arxiv papers regardless of the date. While the main workflow will be automatically triggered everyday and retrieve new papers released yesterday. There is no new arxiv paper at weekends and holiday, in which case you may see "No new papers found" in the log of main workflow.
+| 层级 | 技术 |
+| :--- | :--- |
+| 后端 | FastAPI, uvicorn |
+| 前端 | 原生 JavaScript, Marked.js |
+| LLM | OpenAI 兼容 API / llama-cpp-python (本地) |
+| 推荐 | sentence-transformers, scikit-learn |
+| 数据 | pyzotero, arxiv-py, feedparser |
 
-Then check the log and the receiver email after it finishes.
+## 贡献
 
-By default, the main workflow runs on 22:00 UTC everyday. You can change this time by editting the workflow config `.github/workflows/main.yml`.
+欢迎提交 Issue 和 PR！PR 请合并到 `dev` 分支。
 
-### Local Running (Email Pipeline)
-Supported by [uv](https://github.com/astral-sh/uv), the email pipeline can easily run on your local device if uv is installed:
-```bash
-# set all the environment variables
-# export ZOTERO_ID=xxxx
-# ...
-cd zotero-arxiv-daily
-uv run main.py
-```
-> [!IMPORTANT]
-> The workflow will download and run an LLM (Qwen2.5-3B, the file size of which is about 3G). Make sure your network and hardware can handle it.
+## 许可证
 
-> [!WARNING]
-> Other package managers like pip or conda are not tested. You can still use them to install this workflow because there is a `pyproject.toml`, while potential problems exist.
-
-## 🚀 Sync with the latest version
-This project is in active development. You can subscribe this repo via `Watch` so that you can be notified once we publish new release.
-
-![Watch](./assets/subscribe_release.png)
-
-
-## 📖 How it works
-*Zotero-arXiv-Daily* firstly retrieves all the papers in your Zotero library and all the papers released in the previous day, via corresponding API. Then it calculates the embedding of each paper's abstract via an embedding model. The score of a paper is its weighted average similarity over all your Zotero papers (newer paper added to the library has higher weight).
-
-The TLDR of each paper is generated by a lightweight LLM (Qwen2.5-3b-instruct-q4_k_m), given its title, abstract, introduction, and conclusion (if any). The introduction and conclusion are extracted from the source latex file of the paper.
-
-## 📌 Limitations
-- The recommendation algorithm is very simple, it may not accurately reflect your interest. Welcome better ideas for improving the algorithm!
-- This workflow deploys an LLM on the cpu of Github Action runner, and it takes about 70s to generate a TLDR for one paper. High `MAX_PAPER_NUM` can lead the execution time exceed the limitation of Github Action runner (6h per execution for public repo, and 2000 mins per month for private repo). Commonly, the quota given to public repo is definitely enough for individual use. If you have special requirements, you can deploy the workflow in your own server, or use a self-hosted Github Action runner, or pay for the exceeded execution time.
-
-## 👯‍♂️ Contribution
-Any issue and PR are welcomed! But remember that **each PR should merge to the `dev` branch**.
-
-## 📃 License
-Distributed under the AGPLv3 License. See `LICENSE` for detail.
-
-## ❤️ Acknowledgement
-- [pyzotero](https://github.com/urschrei/pyzotero)
-- [arxiv](https://github.com/lukasschwab/arxiv.py)
-- [sentence_transformers](https://github.com/UKPLab/sentence-transformers)
-- [llama-cpp-python](https://github.com/abetlen/llama-cpp-python)
-
-## ☕ Buy Me A Coffee
-If you find this project helpful, welcome to sponsor me via WeChat or via [ko-fi](https://ko-fi.com/tidedra).
-![wechat_qr](assets/wechat_sponsor.JPG)
-
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=TideDra/zotero-arxiv-daily&type=Date)](https://star-history.com/#TideDra/zotero-arxiv-daily&Date)
+本项目基于 AGPLv3 协议分发，详见 [LICENSE](/LICENSE)。

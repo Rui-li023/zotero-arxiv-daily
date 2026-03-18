@@ -1,0 +1,18 @@
+[Unit]
+Description=Zotero arXiv Daily Paper Recommender
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__WORKDIR__/.env
+ExecStart=__WORKDIR__/.venv/bin/uvicorn server:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zotero-arxiv-daily
+
+[Install]
+WantedBy=multi-user.target

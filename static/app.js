@@ -17,6 +17,10 @@ const state = {
   streaming: false,
   searchQuery: '',
   serverLlm: { hasLlm: false, needsPassword: false },
+  starred: {}, // arxiv_id -> {paper_data, starred_date, notes}
+  viewingStarred: false,
+  zoteroConfigured: false,
+  subscriptions: [], // [{keyword, weight, enabled}]
   settings: {
     mode: 'server',
     serverPassword: '',
@@ -79,15 +83,91 @@ const dom = {
   addPaperClose: $('#addPaperClose'),
   newPaperInput: $('#newPaperInput'),
   newPaperSubmit: $('#newPaperSubmit'),
+  // Stats
+  statsBtn: $('#statsBtn'),
+  statsModal: $('#statsModal'),
+  statsClose: $('#statsClose'),
   // Toast
   toastContainer: $('#toastContainer'),
 };
 
+// === Setup ===
+async function checkSetup() {
+  try {
+    const resp = await fetch('/api/setup/status');
+    const data = await resp.json();
+    if (data.needs_setup) {
+      showSetupOverlay();
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function showSetupOverlay() {
+  const overlay = document.getElementById('setupOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+  // Hide main app
+  const appEl = document.querySelector('.app > header');
+  const mainEl = document.querySelector('.app > main');
+  if (appEl) appEl.style.display = 'none';
+  if (mainEl) mainEl.style.display = 'none';
+
+  const form = document.getElementById('setupForm');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('setupSubmit');
+      const btnText = btn.querySelector('.btn-text');
+      const btnLoader = btn.querySelector('.btn-loader');
+      btnText.textContent = 'Saving...';
+      if (btnLoader) btnLoader.classList.remove('hidden');
+      btn.disabled = true;
+
+      const payload = {
+        OPENAI_API_KEY: document.getElementById('setupApiKey').value.trim(),
+        OPENAI_API_BASE: document.getElementById('setupApiBase').value.trim() || 'https://api.openai.com/v1',
+        MODEL_NAME: document.getElementById('setupModel').value.trim() || 'gpt-4o',
+        LANGUAGE: document.getElementById('setupLanguage').value.trim() || 'Chinese',
+        ARXIV_QUERY: document.getElementById('setupArxivQuery').value.trim() || 'cat:cs.AI+cat:cs.CV+cat:cs.LG+cat:cs.CL+cat:cs.RO',
+        MAX_PAPER_NUM: document.getElementById('setupMaxPapers').value.trim() || '25',
+        SMTP_SERVER: document.getElementById('setupSmtpServer').value.trim(),
+        SMTP_PORT: document.getElementById('setupSmtpPort').value.trim() || '465',
+        SENDER: document.getElementById('setupSender').value.trim(),
+        SENDER_PASSWORD: document.getElementById('setupSenderPassword').value.trim(),
+        RECEIVER: document.getElementById('setupReceiver').value.trim(),
+        ZOTERO_ID: document.getElementById('setupZoteroId').value.trim(),
+        ZOTERO_KEY: document.getElementById('setupZoteroKey').value.trim(),
+        SERVER_LLM_PASSWORD: document.getElementById('setupServerPassword').value.trim(),
+      };
+
+      try {
+        const resp = await fetch('/api/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error('Setup failed');
+        // Show success and prompt reload
+        btnText.textContent = 'Done! Reloading...';
+        if (btnLoader) btnLoader.classList.add('hidden');
+        setTimeout(() => window.location.reload(), 1000);
+      } catch (err) {
+        btnText.textContent = 'Error — try again';
+        if (btnLoader) btnLoader.classList.add('hidden');
+        btn.disabled = false;
+      }
+    });
+  }
+}
+
 // === Init ===
 async function init() {
   loadSettings();
+  const needsSetup = await checkSetup();
+  if (needsSetup) return;
   bindEvents();
-  await Promise.all([checkLlmStatus(), loadPrompts(), loadEmailConfig()]);
+  await Promise.all([checkLlmStatus(), loadPrompts(), loadEmailConfig(), loadStarred(), checkZoteroStatus(), loadSubscriptions()]);
   await loadDates();
 }
 
@@ -318,6 +398,22 @@ function bindEvents() {
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeyboard);
 
+  // Stats modal
+  dom.statsBtn.addEventListener('click', openStatsModal);
+  dom.statsClose.addEventListener('click', () => closeModal(dom.statsModal));
+  dom.statsModal.addEventListener('click', (e) => {
+    if (e.target === dom.statsModal) closeModal(dom.statsModal);
+  });
+
+  // Subscription management
+  const addSubBtn = document.getElementById('addSubBtn');
+  if (addSubBtn) {
+    addSubBtn.addEventListener('click', addSubscription);
+    document.getElementById('newSubKeyword')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addSubscription();
+    });
+  }
+
   // Resize handles
   initHorizontalResize();
   initVerticalResize();
@@ -465,6 +561,12 @@ async function loadDates() {
       return;
     }
 
+    // Add "Starred" virtual option
+    const starOpt = document.createElement('option');
+    starOpt.value = '__starred__';
+    starOpt.textContent = '\u2605 Starred';
+    dom.dateSelect.appendChild(starOpt);
+
     state.dates.forEach(d => {
       const opt = document.createElement('option');
       opt.value = d;
@@ -472,6 +574,8 @@ async function loadDates() {
       dom.dateSelect.appendChild(opt);
     });
 
+    // Default to first real date
+    dom.dateSelect.value = state.dates[0];
     loadPapers(state.dates[0]);
   } catch (e) {
     console.error('Failed to load dates:', e);
@@ -489,6 +593,29 @@ async function loadPapers(date) {
   dom.emptyState.classList.add('hidden');
   clearPaperCards();
 
+  // Handle starred virtual date
+  if (date === '__starred__') {
+    state.viewingStarred = true;
+    dom.loadingState.classList.add('hidden');
+    await loadStarred();
+    const starred = state.starred;
+    // Convert starred papers into a flat list, grouped by starred_date
+    const papers = [];
+    for (const [id, entry] of Object.entries(starred)) {
+      const pd = entry.paper_data || {};
+      pd._starred_date = entry.starred_date;
+      papers.push(pd);
+    }
+    // Sort by starred date desc
+    papers.sort((a, b) => (b._starred_date || '').localeCompare(a._starred_date || ''));
+    state.papers = papers;
+    if (papers.length === 0) { showEmpty(); return; }
+    updatePaperCount();
+    renderPaperCards();
+    return;
+  }
+
+  state.viewingStarred = false;
   try {
     const resp = await api(`/api/papers?date=${encodeURIComponent(date)}`);
     const data = await resp.json();
@@ -565,8 +692,22 @@ function createPaperCard(paper, idx) {
     linksHtml += `<a class="detail-link" href="${escapeHtml(paper.code_url)}" target="_blank" onclick="event.stopPropagation()">Code</a>`;
   }
 
+  const isStarred = !!state.starred[paper.arxiv_id];
+  const starClass = isStarred ? 'star-btn active' : 'star-btn';
+
+  // Build export button HTML (only if Zotero is configured)
+  const exportBtnHtml = state.zoteroConfigured
+    ? `<button class="card-expand-export-btn" data-arxiv-id="${escapeHtml(paper.arxiv_id)}" title="Export to Zotero">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Zotero
+      </button>`
+    : '';
+
   card.innerHTML = `
     <span class="card-rank">#${idx + 1}</span>
+    <button class="${starClass}" data-arxiv-id="${escapeHtml(paper.arxiv_id)}" title="Star this paper">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="${isStarred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+    </button>
     <div class="card-title">${escapeHtml(paper.title)}</div>
     <div class="card-authors">${escapeHtml(authorStr)}</div>
     ${affiliations ? `<div class="card-affiliations">${escapeHtml(affiliations)}</div>` : ''}
@@ -582,6 +723,7 @@ function createPaperCard(paper, idx) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Chat
         </button>
+        ${exportBtnHtml}
       </div>
       <div class="card-expand-tldr">${tldrContent || '<p class="no-tldr">No analysis available</p>'}</div>
     </div>
@@ -589,8 +731,15 @@ function createPaperCard(paper, idx) {
 
   card.addEventListener('click', (e) => {
     // Don't toggle if clicking a link or button inside expanded area
-    if (e.target.closest('a') || e.target.closest('.card-expand-chat-btn')) return;
+    if (e.target.closest('a') || e.target.closest('.card-expand-chat-btn') || e.target.closest('.card-expand-export-btn') || e.target.closest('.star-btn')) return;
     toggleCardExpand(card, paper);
+  });
+
+  // Star button
+  const starBtn = card.querySelector('.star-btn');
+  starBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleStar(paper, starBtn);
   });
 
   // Chat button inside the expanded card
@@ -599,6 +748,15 @@ function createPaperCard(paper, idx) {
     e.stopPropagation();
     openDetail(paper);
   });
+
+  // Export to Zotero button
+  const exportBtn = card.querySelector('.card-expand-export-btn');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportToZotero(paper);
+    });
+  }
 
   return card;
 }
@@ -663,6 +821,9 @@ function filterPapers() {
 // === Detail Panel ===
 function openDetail(paper) {
   state.selectedPaper = paper;
+
+  // Record paper view
+  fetch(`/api/paper/${encodeURIComponent(paper.arxiv_id)}/view`, { method: 'POST' }).catch(() => {});
 
   // Update focused index
   const visible = getVisiblePapers();
@@ -1245,6 +1406,156 @@ function initVerticalResize() {
     document.addEventListener('mouseup', onMouseUp);
   });
 }
+
+// === Starred Papers ===
+async function loadStarred() {
+  try {
+    const resp = await fetch('/api/starred');
+    const data = await resp.json();
+    state.starred = data.starred || {};
+  } catch {}
+}
+
+async function toggleStar(paper, btn) {
+  const id = paper.arxiv_id;
+  const isStarred = !!state.starred[id];
+  try {
+    if (isStarred) {
+      await api(`/api/paper/${encodeURIComponent(id)}/star`, { method: 'DELETE' });
+      delete state.starred[id];
+      btn.classList.remove('active');
+      btn.querySelector('svg').setAttribute('fill', 'none');
+      showToast('Unstarred', 'info');
+    } else {
+      await api(`/api/paper/${encodeURIComponent(id)}/star`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paper_data: paper, notes: '' }),
+      });
+      state.starred[id] = { paper_data: paper, starred_date: new Date().toISOString().slice(0, 10) };
+      btn.classList.add('active');
+      btn.querySelector('svg').setAttribute('fill', 'currentColor');
+      showToast('Starred!', 'success');
+    }
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+// === Zotero Export ===
+async function checkZoteroStatus() {
+  try {
+    const resp = await fetch('/api/zotero/status');
+    const data = await resp.json();
+    state.zoteroConfigured = data.configured;
+  } catch {}
+}
+
+async function exportToZotero(paper) {
+  try {
+    await api(`/api/paper/${encodeURIComponent(paper.arxiv_id)}/export-zotero`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: paper.title,
+        authors: paper.authors || [],
+        abstract: paper.summary || '',
+        url: paper.pdf_url || '',
+        date: '',
+      }),
+    });
+    showToast('Exported to Zotero!', 'success');
+  } catch (e) {
+    showToast('Zotero export failed: ' + e.message, 'error');
+  }
+}
+
+// === Stats ===
+async function openStatsModal() {
+  openModal(dom.statsModal);
+  try {
+    const resp = await fetch('/api/stats/summary');
+    const data = await resp.json();
+    document.getElementById('statToday').textContent = data.today_views;
+    document.getElementById('statWeek').textContent = data.week_views;
+    document.getElementById('statMonth').textContent = data.month_views;
+    document.getElementById('statTotal').textContent = data.total_papers;
+    document.getElementById('statChatted').textContent = data.total_chatted;
+    document.getElementById('statViews').textContent = data.total_views;
+  } catch {}
+}
+
+// === Subscriptions ===
+async function loadSubscriptions() {
+  try {
+    const resp = await fetch('/api/subscriptions');
+    const data = await resp.json();
+    state.subscriptions = data.subscriptions || [];
+    renderSubscriptions();
+  } catch {}
+}
+
+function renderSubscriptions() {
+  const list = document.getElementById('subscriptionList');
+  if (!list) return;
+  list.innerHTML = '';
+  state.subscriptions.forEach((sub, i) => {
+    const row = document.createElement('div');
+    row.className = 'subscription-row';
+    row.innerHTML = `
+      <label class="sub-toggle">
+        <input type="checkbox" ${sub.enabled !== false ? 'checked' : ''} data-idx="${i}">
+      </label>
+      <span class="sub-keyword">${escapeHtml(sub.keyword)}</span>
+      <span class="sub-weight">w:${sub.weight || 1}</span>
+      <button class="sub-delete-btn" data-idx="${i}" title="Remove">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    `;
+    // Toggle enabled
+    row.querySelector('input[type=checkbox]').addEventListener('change', (e) => {
+      state.subscriptions[i].enabled = e.target.checked;
+      saveSubscriptions();
+    });
+    // Delete
+    row.querySelector('.sub-delete-btn').addEventListener('click', () => {
+      state.subscriptions.splice(i, 1);
+      saveSubscriptions();
+      renderSubscriptions();
+    });
+    list.appendChild(row);
+  });
+}
+
+function addSubscription() {
+  const kwInput = document.getElementById('newSubKeyword');
+  const wInput = document.getElementById('newSubWeight');
+  const keyword = kwInput.value.trim();
+  if (!keyword) return;
+  const weight = parseInt(wInput.value) || 1;
+  state.subscriptions.push({ keyword, weight, enabled: true });
+  saveSubscriptions();
+  renderSubscriptions();
+  kwInput.value = '';
+  wInput.value = '1';
+}
+
+async function saveSubscriptions() {
+  try {
+    await fetch('/api/subscriptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscriptions: state.subscriptions }),
+    });
+  } catch {}
+}
+
+// Also save subscriptions when saving settings
+const _origSaveSettings = saveSettings;
+saveSettings = function() {
+  _origSaveSettings();
+  saveSubscriptions();
+};
 
 // === Boot ===
 init();

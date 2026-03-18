@@ -9,7 +9,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from pyzotero import zotero
 from recommender import rerank_paper
 from construct_email import render_email, send_email
-from storage import save_daily_papers
+from storage import save_daily_papers, load_paper_history, update_paper_history
 from tqdm import trange,tqdm
 from loguru import logger
 from gitignore_parser import parse_gitignore
@@ -46,6 +46,27 @@ def filter_corpus(corpus:list[dict], pattern:str) -> list[dict]:
             new_corpus.append(c)
     os.remove(filename)
     return new_corpus
+
+
+def apply_subscription_boosts(papers, subscriptions: list[dict]):
+    """Apply keyword subscription boosts to paper scores.
+    Each subscription: {keyword, weight, enabled}.
+    If a paper's title+abstract contains the keyword, score *= (1 + 0.1 * weight).
+    Then re-sort by score descending.
+    """
+    active = [s for s in subscriptions if s.get("enabled", True)]
+    if not active:
+        return papers
+    for p in papers:
+        text = (p.title + " " + p.summary).lower() if hasattr(p, 'title') else ""
+        for sub in active:
+            kw = sub.get("keyword", "").lower()
+            weight = sub.get("weight", 1)
+            if kw and kw in text:
+                if p.score is not None:
+                    p.score *= (1 + 0.1 * weight)
+    papers.sort(key=lambda p: p.score if p.score is not None else 0, reverse=True)
+    return papers
 
 
 def get_arxiv_paper(query:str, debug:bool=False) -> list[ArxivPaper]:
@@ -172,6 +193,16 @@ if __name__ == '__main__':
             logger.info("No new papers found.")
             exit(0)
 
+        # Deduplicate against history
+        history = load_paper_history()
+        before = len(papers)
+        papers = [p for p in papers if p.arxiv_id not in history]
+        if before != len(papers):
+            logger.info(f"Filtered {before - len(papers)} duplicate papers.")
+        if not papers:
+            logger.info("All papers were duplicates.")
+            exit(0)
+
         # Rerank using Zotero if credentials are available
         if args.zotero_id and args.zotero_key:
             logger.info("Retrieving Zotero corpus for reranking...")
@@ -200,6 +231,7 @@ if __name__ == '__main__':
 
         today = datetime.datetime.now().strftime('%Y-%m-%d')
         save_daily_papers(papers, today)
+        update_paper_history(papers, today)
         logger.success(f"Saved {len(papers)} papers to data/{today}.json")
     else:
         # Full pipeline: Zotero + rerank + email + save
@@ -216,6 +248,14 @@ if __name__ == '__main__':
             logger.info(f"Remaining {len(corpus)} papers after filtering.")
         logger.info("Retrieving Arxiv papers...")
         papers = get_arxiv_paper(args.arxiv_query, args.debug)
+
+        # Deduplicate against history
+        history = load_paper_history()
+        before = len(papers)
+        papers = [p for p in papers if p.arxiv_id not in history]
+        if before != len(papers):
+            logger.info(f"Filtered {before - len(papers)} duplicate papers.")
+
         if len(papers) == 0:
             logger.info("No new papers found. Yesterday maybe a holiday and no one submit their work :). If this is not the case, please check the ARXIV_QUERY.")
             if not args.send_empty:
@@ -237,6 +277,7 @@ if __name__ == '__main__':
         # Save papers to JSON for the web interface
         today = datetime.datetime.now().strftime('%Y-%m-%d')
         save_daily_papers(papers, today)
+        update_paper_history(papers, today)
 
         logger.info("Sending email...")
         send_email(args.sender, args.receiver, args.sender_password, args.smtp_server, args.smtp_port, html)

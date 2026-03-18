@@ -12,7 +12,7 @@ load_dotenv(override=True)
 
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import arxiv
 
@@ -23,6 +23,14 @@ from storage import (
     save_daily_papers,
     save_chat_history,
     load_chat_history,
+    load_paper_history,
+    update_paper_history,
+    load_starred_papers,
+    star_paper,
+    unstar_paper,
+    load_stats,
+    record_paper_view,
+    record_paper_chat,
     DATA_DIR,
 )
 from llm import LLM, set_global_llm, get_llm
@@ -62,6 +70,23 @@ ZOTERO_ID = os.getenv("ZOTERO_ID", "")
 ZOTERO_KEY = os.getenv("ZOTERO_KEY", "")
 ZOTERO_IGNORE = os.getenv("ZOTERO_IGNORE", "")
 
+ENV_PATH = Path(__file__).parent / ".env"
+
+def update_env_var(key: str, value: str):
+    """Update or add a key=value pair in the .env file."""
+    lines = []
+    if ENV_PATH.exists():
+        lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key}=") or line.startswith(f"{key} ="):
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}")
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
 # Mount static files
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -69,14 +94,11 @@ STATIC_DIR.mkdir(exist_ok=True)
 # --- Email Pipeline ---
 
 def get_email_receivers() -> list[str]:
-    """Get receivers from config.json, fall back to env RECEIVER."""
-    cfg = load_config()
-    receivers = cfg.get("email_receivers", [])
-    if not receivers:
-        env_receiver = os.getenv("RECEIVER", "")
-        if env_receiver:
-            receivers = [r.strip() for r in env_receiver.split(",") if r.strip()]
-    return receivers
+    """Get receivers from RECEIVER env var (comma-separated)."""
+    env_receiver = os.getenv("RECEIVER", "")
+    if env_receiver:
+        return [r.strip() for r in env_receiver.split(",") if r.strip()]
+    return []
 
 
 def run_daily_pipeline():
@@ -95,6 +117,16 @@ def run_daily_pipeline():
 
     if not papers:
         logger.info("No new papers found today.")
+        return
+
+    # Deduplicate: filter out papers already seen in history
+    history = load_paper_history()
+    before_count = len(papers)
+    papers = [p for p in papers if p.arxiv_id not in history]
+    if before_count != len(papers):
+        logger.info(f"Filtered {before_count - len(papers)} duplicate papers (already seen).")
+    if not papers:
+        logger.info("All papers were duplicates. Nothing new today.")
         return
 
     # Rerank papers using Zotero corpus if credentials are available
@@ -122,6 +154,14 @@ def run_daily_pipeline():
         for i, p in enumerate(papers):
             p.score = max(10 - i * 0.3, 5)
 
+    # Apply subscription keyword boosts
+    cfg = load_config()
+    subscriptions = cfg.get("subscriptions", [])
+    if subscriptions:
+        from main import apply_subscription_boosts
+        papers = apply_subscription_boosts(papers, subscriptions)
+        logger.info("Applied subscription keyword boosts.")
+
     if MAX_PAPER_NUM != -1:
         papers = papers[:MAX_PAPER_NUM]
 
@@ -129,6 +169,7 @@ def run_daily_pipeline():
     html = render_email(papers)  # Triggers highlight/tldr/affiliations
 
     save_daily_papers(papers, today)
+    update_paper_history(papers, today)
     logger.success(f"Saved {len(papers)} papers to data/{today}.json")
 
     # Send email to all configured receivers
@@ -389,6 +430,7 @@ class SaveChatRequest(BaseModel):
 async def save_chat(arxiv_id: str, req: SaveChatRequest):
     """Save chat history for a paper."""
     save_chat_history(arxiv_id, req.messages)
+    record_paper_chat(arxiv_id)
     return {"status": "ok"}
 
 
@@ -408,8 +450,9 @@ async def get_prompts():
 async def get_email_config():
     """Return email configuration."""
     cfg = load_config()
+    receivers = get_email_receivers()
     return {
-        "email_receivers": cfg.get("email_receivers", []),
+        "email_receivers": receivers,
         "email_schedule_hour": cfg.get("email_schedule_hour", 9),
         "email_schedule_minute": cfg.get("email_schedule_minute", 0),
         "smtp_configured": bool(SMTP_SERVER and SENDER),
@@ -424,10 +467,12 @@ class EmailConfigRequest(BaseModel):
 
 @app.post("/api/config/email")
 async def update_email_config(req: EmailConfigRequest):
-    """Update email configuration in config.json."""
+    """Update email configuration. Receivers saved to .env, schedule to config.json."""
     cfg = load_config()
     if req.email_receivers is not None:
-        cfg["email_receivers"] = req.email_receivers
+        receiver_str = ",".join(req.email_receivers)
+        update_env_var("RECEIVER", receiver_str)
+        os.environ["RECEIVER"] = receiver_str
     if req.email_schedule_hour is not None:
         cfg["email_schedule_hour"] = req.email_schedule_hour
     if req.email_schedule_minute is not None:
@@ -442,6 +487,221 @@ async def send_email_now():
     thread = threading.Thread(target=run_daily_pipeline, daemon=True)
     thread.start()
     return {"status": "pipeline started"}
+
+
+# --- Starred Papers API ---
+
+@app.get("/api/starred")
+async def get_starred():
+    """Return all starred papers."""
+    starred = load_starred_papers()
+    return {"starred": starred}
+
+
+class StarRequest(BaseModel):
+    paper_data: dict
+    notes: str = ""
+
+
+@app.post("/api/paper/{arxiv_id:path}/star")
+async def star_paper_api(arxiv_id: str, req: StarRequest):
+    """Star a paper."""
+    star_paper(arxiv_id, req.paper_data, req.notes)
+    return {"status": "ok"}
+
+
+@app.delete("/api/paper/{arxiv_id:path}/star")
+async def unstar_paper_api(arxiv_id: str):
+    """Unstar a paper."""
+    unstar_paper(arxiv_id)
+    return {"status": "ok"}
+
+
+# --- Subscriptions API ---
+
+@app.get("/api/subscriptions")
+async def get_subscriptions():
+    """Return keyword subscriptions from config."""
+    cfg = load_config()
+    return {"subscriptions": cfg.get("subscriptions", [])}
+
+
+class SubscriptionsRequest(BaseModel):
+    subscriptions: list[dict]
+
+
+@app.post("/api/subscriptions")
+async def update_subscriptions(req: SubscriptionsRequest):
+    """Update keyword subscriptions in config."""
+    cfg = load_config()
+    cfg["subscriptions"] = req.subscriptions
+    save_config(cfg)
+    return {"status": "ok"}
+
+
+# --- Stats API ---
+
+@app.post("/api/paper/{arxiv_id:path}/view")
+async def record_view(arxiv_id: str):
+    """Record a paper view."""
+    record_paper_view(arxiv_id)
+    return {"status": "ok"}
+
+
+@app.get("/api/stats/summary")
+async def get_stats_summary():
+    """Return reading stats summary."""
+    stats = load_stats()
+    now = datetime.datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    week_start = (now - datetime.timedelta(days=now.weekday())).strftime('%Y-%m-%d')
+    month_str = now.strftime('%Y-%m')
+
+    total_views = 0
+    total_papers = len(stats)
+    total_chatted = 0
+    today_views = 0
+    week_views = 0
+    month_views = 0
+
+    for aid, s in stats.items():
+        views = s.get("views", 0)
+        total_views += views
+        if s.get("chatted"):
+            total_chatted += 1
+        last = s.get("last_viewed", "")
+        if last:
+            last_date = last[:10]
+            if last_date == today_str:
+                today_views += 1
+            if last_date >= week_start:
+                week_views += 1
+            if last_date[:7] == month_str:
+                month_views += 1
+
+    return {
+        "today_views": today_views,
+        "week_views": week_views,
+        "month_views": month_views,
+        "total_papers": total_papers,
+        "total_chatted": total_chatted,
+        "total_views": total_views,
+    }
+
+
+# --- Export to Zotero API ---
+
+@app.get("/api/zotero/status")
+async def zotero_status():
+    """Check if Zotero export is configured."""
+    return {"configured": bool(ZOTERO_ID and ZOTERO_KEY)}
+
+
+class ZoteroExportRequest(BaseModel):
+    title: str
+    authors: list[str] = []
+    abstract: str = ""
+    url: str = ""
+    date: str = ""
+
+
+@app.post("/api/paper/{arxiv_id:path}/export-zotero")
+async def export_to_zotero(arxiv_id: str, req: ZoteroExportRequest):
+    """Export a paper to the user's Zotero library."""
+    if not ZOTERO_ID or not ZOTERO_KEY:
+        raise HTTPException(status_code=400, detail="Zotero credentials not configured")
+    try:
+        from pyzotero import zotero
+        zot = zotero.Zotero(ZOTERO_ID, 'user', ZOTERO_KEY)
+        template = zot.item_template('preprint')
+        template['title'] = req.title
+        template['abstractNote'] = req.abstract
+        template['url'] = f"https://arxiv.org/abs/{arxiv_id}"
+        template['date'] = req.date
+        template['creators'] = [
+            {'creatorType': 'author', 'name': a} for a in req.authors
+        ]
+        template['extra'] = f"arXiv:{arxiv_id}"
+        resp = zot.create_items([template])
+        return {"status": "ok", "result": resp}
+    except Exception as e:
+        logger.error(f"Failed to export {arxiv_id} to Zotero: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Setup API ---
+
+@app.get("/api/setup/status")
+async def setup_status():
+    """Check if first-run setup is needed (.env doesn't exist)."""
+    return {"needs_setup": not ENV_PATH.exists()}
+
+
+class SetupRequest(BaseModel):
+    OPENAI_API_KEY: str = ""
+    OPENAI_API_BASE: str = "https://api.openai.com/v1"
+    MODEL_NAME: str = "gpt-4o"
+    LANGUAGE: str = "Chinese"
+    SMTP_SERVER: str = ""
+    SMTP_PORT: str = "465"
+    SENDER: str = ""
+    SENDER_PASSWORD: str = ""
+    RECEIVER: str = ""
+    ZOTERO_ID: str = ""
+    ZOTERO_KEY: str = ""
+    ARXIV_QUERY: str = "cat:cs.AI+cat:cs.CV+cat:cs.LG+cat:cs.CL+cat:cs.RO"
+    MAX_PAPER_NUM: str = "25"
+    SERVER_LLM_PASSWORD: str = ""
+
+
+@app.post("/api/setup")
+async def run_setup(req: SetupRequest):
+    """Create .env file from setup form data."""
+    lines = [
+        "# ===========================================",
+        "# zotero-arxiv-daily — Web Server (.env)",
+        "# ===========================================",
+        "",
+        "# --- LLM ---",
+        f"OPENAI_API_KEY={req.OPENAI_API_KEY}",
+        f"OPENAI_API_BASE={req.OPENAI_API_BASE}",
+        f"MODEL_NAME={req.MODEL_NAME}",
+        f"LANGUAGE={req.LANGUAGE}",
+        "",
+        "# --- arXiv ---",
+        f"ARXIV_QUERY={req.ARXIV_QUERY}",
+        f"MAX_PAPER_NUM={req.MAX_PAPER_NUM}",
+        "",
+        "# --- Email (SMTP) ---",
+        f"SMTP_SERVER={req.SMTP_SERVER}",
+        f"SMTP_PORT={req.SMTP_PORT}",
+        f"SENDER={req.SENDER}",
+        f"SENDER_PASSWORD={req.SENDER_PASSWORD}",
+        f"RECEIVER={req.RECEIVER}",
+        "",
+        "# --- Zotero (optional) ---",
+        f"ZOTERO_ID={req.ZOTERO_ID}",
+        f"ZOTERO_KEY={req.ZOTERO_KEY}",
+        "",
+        "# --- Server LLM Access Control (optional) ---",
+        f"SERVER_LLM_PASSWORD={req.SERVER_LLM_PASSWORD}",
+    ]
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"status": "ok"}
+
+
+@app.middleware("http")
+async def setup_guard(request: Request, call_next):
+    """If .env doesn't exist, block non-setup API calls with 503."""
+    path = request.url.path
+    if not ENV_PATH.exists():
+        # Allow setup endpoints, static files, and the index page
+        if path.startswith("/api/") and not path.startswith("/api/setup"):
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Setup required", "needs_setup": True},
+            )
+    return await call_next(request)
 
 
 @app.get("/")
