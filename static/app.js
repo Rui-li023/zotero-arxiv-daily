@@ -16,7 +16,7 @@ const state = {
   chatHistories: {}, // arxiv_id -> [messages]
   streaming: false,
   searchQuery: '',
-  serverLlm: { hasLlm: false, needsPassword: false },
+  serverLlm: { hasLlm: false, needsPassword: false, serverModel: '' },
   starred: {}, // arxiv_id -> {paper_data, starred_date, notes}
   viewingStarred: false,
   zoteroConfigured: false,
@@ -27,6 +27,7 @@ const state = {
     apiKey: '',
     apiBase: '',
     model: '',
+    chatModel: '',
     theme: 'dark',
   },
   prompts: {
@@ -71,6 +72,7 @@ const dom = {
   chatMessages: $('#chatMessages'),
   chatInput: $('#chatInput'),
   chatSend: $('#chatSend'),
+  chatModelInput: $('#chatModelInput'),
   // Settings
   settingsBtn: $('#settingsBtn'),
   settingsModal: $('#settingsModal'),
@@ -201,8 +203,17 @@ async function checkLlmStatus() {
     const data = await resp.json();
     state.serverLlm.hasLlm = data.has_server_llm;
     state.serverLlm.needsPassword = data.needs_password;
+    state.serverLlm.serverModel = data.server_model || '';
+    updateChatModelPlaceholder();
     updateServerHint();
   } catch {}
+}
+
+function updateChatModelPlaceholder() {
+  if (dom.chatModelInput) {
+    const model = state.serverLlm.serverModel;
+    dom.chatModelInput.placeholder = model ? model : 'server default';
+  }
 }
 
 function updateServerHint() {
@@ -258,6 +269,10 @@ function loadSettings() {
   } catch {}
   applyTheme(state.settings.theme || 'dark');
   applySettingsToForm();
+  // Restore chat model input from saved settings
+  if (dom.chatModelInput && state.settings.chatModel) {
+    dom.chatModelInput.value = state.settings.chatModel;
+  }
 }
 
 function applyTheme(theme) {
@@ -293,6 +308,7 @@ function saveSettings() {
     apiKey: ($('#apiKey')?.value || '').trim(),
     apiBase: ($('#apiBase')?.value || '').trim(),
     model: ($('#modelName')?.value || '').trim(),
+    chatModel: (dom.chatModelInput?.value || '').trim(),
     theme,
   };
   localStorage.setItem('llmSettings', JSON.stringify(state.settings));
@@ -359,6 +375,14 @@ function bindEvents() {
   dom.settingsSave.addEventListener('click', () => { saveSettings(); closeModal(dom.settingsModal); showToast('Settings saved', 'success'); });
   $$('input[name="llmMode"]').forEach(r => r.addEventListener('change', toggleModeSettings));
   $$('input[name="themeMode"]').forEach(r => r.addEventListener('change', (e) => applyTheme(e.target.value)));
+
+  // Persist chat model selection on change
+  if (dom.chatModelInput) {
+    dom.chatModelInput.addEventListener('change', () => {
+      state.settings.chatModel = dom.chatModelInput.value.trim();
+      localStorage.setItem('llmSettings', JSON.stringify(state.settings));
+    });
+  }
 
   // Send now
   dom.sendNowBtn.addEventListener('click', async () => {
@@ -1035,12 +1059,14 @@ async function streamChat(arxivId) {
   const messages = state.chatHistories[arxivId];
   const body = { messages };
 
+  const chatModel = dom.chatModelInput?.value?.trim() || state.settings.chatModel || '';
   if (state.settings.mode === 'client' && state.settings.apiKey) {
     body.api_key = state.settings.apiKey;
     body.base_url = state.settings.apiBase || undefined;
-    body.model = state.settings.model || undefined;
-  } else if (state.settings.mode === 'server' && state.settings.serverPassword) {
-    body.server_password = state.settings.serverPassword;
+    body.model = chatModel || state.settings.model || undefined;
+  } else if (state.settings.mode === 'server') {
+    if (state.settings.serverPassword) body.server_password = state.settings.serverPassword;
+    if (chatModel) body.model = chatModel;
   }
 
   let fullText = '';

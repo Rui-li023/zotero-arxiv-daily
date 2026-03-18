@@ -339,7 +339,8 @@ async def llm_status():
     """Check if server LLM is configured and whether password is required."""
     has_llm = os.getenv("OPENAI_API_KEY") is not None
     needs_password = bool(SERVER_LLM_PASSWORD)
-    return {"has_server_llm": has_llm, "needs_password": needs_password}
+    server_model = os.getenv("MODEL_NAME", "gpt-4o") if has_llm else None
+    return {"has_server_llm": has_llm, "needs_password": needs_password, "server_model": server_model}
 
 
 @app.post("/api/chat")
@@ -353,9 +354,16 @@ async def chat(req: ChatRequest):
             if not req.server_password or req.server_password != SERVER_LLM_PASSWORD:
                 raise HTTPException(status_code=403, detail="Invalid password for server LLM")
         try:
-            llm = get_llm()
+            global_llm = get_llm()
         except Exception:
             raise HTTPException(status_code=400, detail="No LLM configured. Provide an API key or set server environment variables.")
+        # Allow overriding the model for chat while keeping the global LLM unchanged
+        if req.model and req.model != global_llm.model:
+            llm = LLM(api_key=os.getenv("OPENAI_API_KEY"),
+                       base_url=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
+                       model=req.model, lang=global_llm.lang)
+        else:
+            llm = global_llm
 
     def event_stream():
         """Sync generator — Starlette runs it in a threadpool so the
